@@ -1,9 +1,3 @@
----
-description: Project context and Bun runtime conventions for predicted-funding-aggregator.
-globs: "*.ts, *.tsx, *.html, *.css, *.js, *.jsx, package.json"
-alwaysApply: false
----
-
 # Project: predicted-funding-aggregator
 
 ## What this project is
@@ -113,7 +107,7 @@ v2 (PR #12, squash-merged into `master` as `3b9e717` and tagged `v2.0.0`). The h
 
 v2.1 (PR #14, squash-merged as `06ccff3` and tagged `v2.1.0`): predicted rates first, rolling per-market OI refresh with a seed from `DATA_FILE`, OI-weighted `null` until every used venue has OI, a sliding-window rate limiter matching the server, and 429 waits logged as WARN. Cold-start first publish dropped from 60–115 s to under 1 s, and the hidden 429 every cycle is gone.
 
-Renamed from `coinalyze-api` to `predicted-funding-aggregator` after v2.1, because the old name read like an official Coinalyze client. Local checkouts and the macOS keychain item (`coinalyze-api`, which holds the Coinalyze key) may still use the old name.
+Renamed from `coinalyze-api` to `predicted-funding-aggregator` after v2.1, because the old name read like an official Coinalyze client.
 
 v2.2 (PR #17, squash-merged as `cc8832e` and tagged `v2.2.0`): the dashboard history is persisted to `HISTORY_FILE` (`bun:sqlite`, one transaction per cycle, pruned to `HISTORY_LIMIT` per coin), so the chart survives restarts and container re-creation. `load()` seeds history from the DB only and `funding_rate.json` only seeds latest, so points are not duplicated. A bad `HISTORY_FILE` exits 1 before any API call. Upgrading from v2.1 starts with empty history; there is no migration from `funding_rate.json`.
 
@@ -125,117 +119,7 @@ Headed mode, a separate server file, the live chart source, the `--once` mode (`
 - **Explicit `.ts` import extensions** (`allowImportingTsExtensions`, `verbatimModuleSyntax`). Use `import type` for type-only imports.
 - **Checks:** `bun test` and `bun run typecheck` must pass; CI runs both. Tests must not touch the network or launch a browser; inject fakes (`fetch`, `sleep`, `now`, `launch`).
 - **When behavior changes, update `README.md` in the same commit.** The v1 README drifted badly.
-- **Prefer `Bun.*` APIs** over `node:*` equivalents. See the Bun section below.
+- **Bun only.** Use `bun install`, `bun run`, `bun test` and `bunx`, never npm, node or npx. Prefer `Bun.*` APIs and built-ins (`Bun.serve`, `Bun.file`/`Bun.write`, `bun:sqlite`, global `WebSocket`) over `node:*` modules and npm packages such as `express`, `ws` or `better-sqlite3`. The dashboard is a Bun HTML import; there is no Vite or bundler config.
 - **Style:** 2-space indent, double quotes, semicolons, arrow functions for top-level helpers. No linter/formatter enforced.
 - **Commits and branches follow Conventional Commits** (`feat:`, `fix:`, `refactor:`, `docs:`, `build:`, `perf:`; branches like `feat/<topic>`).
 - **PRs are squash-merged into `master`**, one commit per PR titled with the PR title. Release tags go on the squash commit. Reference PR numbers or squash commits in "Project evolution", because branch hashes do not reach `master`. After a merge, pull `master` and delete the merged local branch with `git branch -D` (`-d` refuses squash-merged branches); check first that its content is on `master`.
-
----
-
-# Bun runtime conventions
-
-Default to using Bun instead of Node.js.
-
-- Use `bun <file>` instead of `node <file>` or `ts-node <file>`
-- Use `bun test` instead of `jest` or `vitest`
-- Use `bun build <file.html|file.ts|file.css>` instead of `webpack` or `esbuild`
-- Use `bun install` instead of `npm install` or `yarn install` or `pnpm install`
-- Use `bun run <script>` instead of `npm run <script>` or `yarn run <script>` or `pnpm run <script>`
-- Use `bunx <package> <command>` instead of `npx <package> <command>`
-- Bun automatically loads .env, so don't use dotenv.
-
-## APIs
-
-- `Bun.serve()` supports WebSockets, HTTPS, and routes. Don't use `express`.
-- `bun:sqlite` for SQLite. Don't use `better-sqlite3`.
-- `Bun.redis` for Redis. Don't use `ioredis`.
-- `Bun.sql` for Postgres. Don't use `pg` or `postgres.js`.
-- `WebSocket` is built-in. Don't use `ws`.
-- Prefer `Bun.file` over `node:fs`'s readFile/writeFile
-- Bun.$`ls` instead of execa.
-
-## Testing
-
-Use `bun test` to run tests.
-
-```ts#index.test.ts
-import { test, expect } from "bun:test";
-
-test("hello world", () => {
-  expect(1).toBe(1);
-});
-```
-
-## Frontend
-
-Use HTML imports with `Bun.serve()`. Don't use `vite`. HTML imports fully support React, CSS, Tailwind.
-
-Server:
-
-```ts#index.ts
-import index from "./index.html"
-
-Bun.serve({
-  routes: {
-    "/": index,
-    "/api/users/:id": {
-      GET: (req) => {
-        return new Response(JSON.stringify({ id: req.params.id }));
-      },
-    },
-  },
-  // optional websocket support
-  websocket: {
-    open: (ws) => {
-      ws.send("Hello, world!");
-    },
-    message: (ws, message) => {
-      ws.send(message);
-    },
-    close: (ws) => {
-      // handle close
-    }
-  },
-  development: {
-    hmr: true,
-    console: true,
-  }
-})
-```
-
-HTML files can import .tsx, .jsx or .js files directly and Bun's bundler will transpile & bundle automatically. `<link>` tags can point to stylesheets and Bun's CSS bundler will bundle.
-
-```html#index.html
-<html>
-  <body>
-    <h1>Hello, world!</h1>
-    <script type="module" src="./frontend.tsx"></script>
-  </body>
-</html>
-```
-
-With the following `frontend.tsx`:
-
-```tsx#frontend.tsx
-import React from "react";
-import { createRoot } from "react-dom/client";
-
-// import .css files directly and it works
-import './index.css';
-
-const root = createRoot(document.body);
-
-export default function Frontend() {
-  return <h1>Hello, world!</h1>;
-}
-
-root.render(<Frontend />);
-```
-
-Then, run index.ts
-
-```sh
-bun --hot ./index.ts
-```
-
-For more information, read the Bun API docs in `node_modules/bun-types/docs/**.mdx`.
