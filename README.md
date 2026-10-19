@@ -132,7 +132,7 @@ bun install
 bun run start           # dashboard on http://localhost:3000, WebSocket on /ws
 ```
 
-Open the dashboard and enter your `AUTH_TOKEN`. It is masked by default; **Show** reveals it and **Hide** masks it again. The token is kept in the browser's `localStorage`, so the page reconnects on reload. On screens narrower than 960 px the per-venue table becomes one card per venue, so no column is cut off on phones or tablets.
+Open the dashboard and enter your `AUTH_TOKEN`. It is masked by default; **Show** reveals it and **Hide** masks it again. The token is kept in the browser's `localStorage`, so the page reconnects on reload. A square next to a venue's Per 8h value marks a rate more than 1σ (population standard deviation of the `used` venues) away from AVG. The figures get a **STALE** badge when the last snapshot is older than three poll intervals. On screens narrower than 960 px the per-venue table becomes one card per venue, so no column is cut off on phones or tablets.
 
 Bun loads `.env` automatically, so no `dotenv` package is needed.
 
@@ -253,7 +253,8 @@ src/
   funding/universe.ts        the ten venues and their rate periods
   funding/aggregate.ts       AVG / OI-weighted (pure)
   funding/source.ts          FundingSource (venue resolution, rolling OI, staleness, components)
-web/                         dashboard (Bun HTML import + lightweight-charts)
+web/                         dashboard (Bun HTML import + lightweight-charts, IBM Plex fonts)
+design/handoff/              reference export of the dashboard design (not shipped in the image)
 scripts/calibrate/           offline calibration (Playwright; dev dependency)
 test/                        bun:test suites
 ```
