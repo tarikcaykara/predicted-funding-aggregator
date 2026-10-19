@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aggregated Predicted Funding Rate</title>
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app">
+  <header class="header">
+    <div class="header__titles">
+      <h1 class="header__title">Aggregated Predicted Funding Rate</h1>
+      <p class="header__subtitle">Ten stablecoin-margined perpetual venues via the Coinalyze API · % per 8h</p>
+    </div>
+
+    <form class="token" id="token-form" data-invalid="false" novalidate>
+      <div class="token__field">
+        <label class="visually-hidden" for="token-input">Auth token</label>
+        <input class="token__input" id="token-input" type="password" placeholder="AUTH_TOKEN" autocomplete="off" spellcheck="false" aria-describedby="token-error">
+        <button class="token__toggle" id="token-toggle" type="button" aria-controls="token-input" aria-pressed="false">Show</button>
+      </div>
+      <button class="btn btn--primary" id="token-connect" type="submit">Connect</button>
+      <p class="token__error" id="token-error" role="alert" hidden>Token rejected. Check AUTH_TOKEN and connect again.</p>
+    </form>
+
+    <!-- data-state: disconnected | connecting | connected | rejected -->
+    <div class="conn" id="conn" role="status" aria-live="polite" data-state="disconnected">
+      <span class="conn__dot" aria-hidden="true"></span><span class="conn__label" id="conn-label">Disconnected</span>
+    </div>
+  </header>
+
+  <div class="tabs" role="tablist" aria-label="Coin">
+    <button class="tab" role="tab" type="button" data-coin="BTC" aria-selected="true">BTC</button>
+    <button class="tab" role="tab" type="button" data-coin="ETH" aria-selected="false">ETH</button>
+    <button class="tab" role="tab" type="button" data-coin="SOL" aria-selected="false">SOL</button>
+  </div>
+
+  <!-- each .kpi: data-state="waiting|ready", data-stale="true|false"; .kpi__value data-tone="pos|neg|neutral" -->
+  <section class="kpis" aria-label="Aggregates">
+    <article class="kpi" id="kpi-avg" data-state="waiting" data-stale="false">
+      <div class="kpi__head"><h2 class="kpi__label">AVG</h2><span class="kpi__badge">STALE</span></div>
+      <p class="kpi__value" data-tone="neutral">—</p>
+      <p class="kpi__meta">waiting for data…</p>
+    </article>
+    <article class="kpi" id="kpi-oiw" data-state="waiting" data-stale="false">
+      <div class="kpi__head"><h2 class="kpi__label">OI-weighted</h2><span class="kpi__badge">STALE</span></div>
+      <p class="kpi__value" data-tone="neutral">—</p>
+      <p class="kpi__meta">waiting for data…</p>
+    </article>
+    <article class="kpi" id="kpi-spread" data-state="waiting" data-stale="false">
+      <div class="kpi__head"><h2 class="kpi__label">Spread</h2><span class="kpi__sub">(OI-w − AVG)</span><span class="kpi__badge">STALE</span></div>
+      <p class="kpi__value" data-tone="neutral">—</p>
+      <p class="kpi__meta">waiting for data…</p>
+    </article>
+    <article class="kpi" id="kpi-venues" data-state="waiting" data-stale="false">
+      <div class="kpi__head"><h2 class="kpi__label">Venues used</h2><span class="kpi__badge">STALE</span></div>
+      <p class="kpi__value" data-tone="neutral">—</p>
+      <p class="kpi__meta">waiting for data…</p>
+    </article>
+  </section>
+
+  <section class="chart" id="chart" data-empty="true" aria-label="Predicted funding history">
+    <div class="chart__bar">
+      <h2 class="section-label chart__title"><span id="chart-coin">BTC</span> predicted funding · % per 8h</h2>
+      <ul class="legend">
+        <li class="legend__item legend__item--avg">AVG</li>
+        <li class="legend__item legend__item--oiw">OI-weighted</li>
+      </ul>
+    </div>
+    <div class="chart__body">
+      <div class="chart__canvas" id="chart-canvas"></div>
+      <p class="chart__empty">waiting for data…</p>
+    </div>
+  </section>
+
+  <section class="venues" id="venues" data-empty="true" aria-label="Per-venue breakdown">
+    <h2 class="section-label venues__title">Per-venue breakdown</h2>
+    <div class="venues__table" role="table" aria-label="Per-venue breakdown">
+      <div class="venues__head" role="row">
+        <span role="columnheader">Venue</span>
+        <span role="columnheader">Symbol</span>
+        <span role="columnheader" class="cell--num">Predicted</span>
+        <span role="columnheader" class="cell--num">Period</span>
+        <span role="columnheader" class="cell--num">Per 8h</span>
+        <span role="columnheader" class="cell--num">OI (USD)</span>
+        <span role="columnheader" class="cell--num">OI weight</span>
+        <span role="columnheader" class="cell--status">Status</span>
+      </div>
+      <div class="venues__rows" id="venue-rows" role="rowgroup"></div>
+    </div>
+    <p class="venues__empty">waiting for data…</p>
+    <p class="venues__legend">Per 8h more than 1σ from AVG</p>
+  </section>
+
+  <footer class="footer">Data source: <a href="https://coinalyze.net" target="_blank" rel="noopener">Coinalyze</a> · Educational project. Not affiliated with Coinalyze.</footer>
+</div>
+
+<!-- One venue row. On ≤959px CSS turns it into a card; data-label feeds the card labels. -->
+<!-- data-status: used | stale | no_rate | not_listed ; .vrow__p8 data-tone="pos|neg" data-outlier="true|false" -->
+<template id="venue-row-tpl">
+  <div class="vrow" role="row" data-status="used">
+    <span class="vrow__venue" role="cell"></span>
+    <span class="vrow__symbol" role="cell"></span>
+    <span class="vrow__pred cell--num" role="cell" data-label="Predicted"></span>
+    <span class="vrow__period cell--num" role="cell" data-label="Period"></span>
+    <span class="vrow__p8 cell--num" role="cell" data-label="Per 8h"><span class="p8-val"></span><span class="p8-mark" aria-hidden="true"></span></span>
+    <span class="vrow__oi cell--num" role="cell" data-label="OI (USD)"></span>
+    <span class="vrow__weight cell--num" role="cell" data-label="OI weight"></span>
+    <span class="cell--status" role="cell"><span class="status"></span></span>
+  </div>
+</template>
+
+<script src="vendor/lightweight-charts.standalone.production.js"></script>
+<script src="demo.js"></script>
+</body>
+</html>
