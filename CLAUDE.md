@@ -112,7 +112,13 @@ Renamed from `coinalyze-api` to `predicted-funding-aggregator` after v2.1, becau
 
 v2.2 (PR #17, squash-merged as `cc8832e` and tagged `v2.2.0`): the dashboard history is persisted to `HISTORY_FILE` (`bun:sqlite`, one transaction per cycle, pruned to `HISTORY_LIMIT` per coin), so the chart survives restarts and container re-creation. `load()` seeds history from the DB only and `funding_rate.json` only seeds latest, so points are not duplicated. A bad `HISTORY_FILE` exits 1 before any API call. Upgrading from v2.1 starts with empty history; there is no migration from `funding_rate.json`.
 
-Headed mode, a separate server file, the live chart source, the `--once` mode (`bun run once`, removed after v2.2), `SOURCES`/`API_INTERVAL_MS`/`CHART_INTERVAL_MS` and "all STABLE perps" scope are historical.
+v3.0 (tagged `v3.0.0` on `a8b21e8`, the #20 squash commit):
+- **PR #19 (`8497d91`):** the dashboard got the token Show/Hide toggle and a responsive layout (one card per venue below 960 px).
+- **PR #20 (`a8b21e8`):** removed the `--once` mode (`bun run once`). `loadConfig` returns a single `Config` and `AUTH_TOKEN` is always required. Breaking: read `DATA_FILE` or the WebSocket from `bun run start` instead.
+
+v3.1 (PR #22, squash-merged as `9b980be` and tagged `v3.1.0`): the dashboard implements the Claude Design "Ledger" direction. `web/` takes the export's markup and stylesheet verbatim plus self-hosted IBM Plex fonts. `app.ts` keeps the WebSocket and chart logic, renders through the export's DOM contract (`data-*`/ARIA attributes), marks Per 8h values more than 1σ from AVG and draws step lines coloured from the CSS tokens. The unedited export and its reference screens are committed in `design/handoff/` and kept out of the Docker image.
+
+Headed mode, a separate server file, the live chart source, the `--once` mode (`bun run once`, removed in v3.0), `SOURCES`/`API_INTERVAL_MS`/`CHART_INTERVAL_MS` and "all STABLE perps" scope are historical.
 
 ## Working conventions for this repo
 
