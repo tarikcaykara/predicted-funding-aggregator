@@ -118,6 +118,8 @@ v3.0 (tagged `v3.0.0` on `a8b21e8`, the #20 squash commit):
 
 v3.1 (PR #22, squash-merged as `9b980be` and tagged `v3.1.0`): the dashboard implements the Claude Design "Ledger" direction. `web/` takes the export's markup and stylesheet verbatim plus self-hosted IBM Plex fonts. `app.ts` keeps the WebSocket and chart logic, renders through the export's DOM contract (`data-*`/ARIA attributes), marks Per 8h values more than 1σ from AVG and draws step lines coloured from the CSS tokens. The unedited export and its reference screens are committed in `design/handoff/` and kept out of the Docker image.
 
+v3.2 (PR #24, squash-merged as `282841f` and tagged `v3.2.0`): the dashboard implements the Claude Design "Number Line" direction. `web/` takes the export's markup (Google Fonts links dropped, local stylesheet and script, a `#history-window` span) and its stylesheet minus the states board, plus self-hosted JetBrains Mono and Space Grotesk. `app.ts` keeps the WebSocket, history and reconnect logic and renders the `#app[data-conn]`/`[data-data]` states, venues as dots on a shared rate axis (area ∝ OI weight) and a spread histogram pane. The default coin is BTC. Ledger is archived at `v3.1.0` (restore command in the README); both exports live in `design/handoff/number-line/` and `design/handoff/ledger/`.
+
 Headed mode, a separate server file, the live chart source, the `--once` mode (`bun run once`, removed in v3.0), `SOURCES`/`API_INTERVAL_MS`/`CHART_INTERVAL_MS` and "all STABLE perps" scope are historical.
 
 ## Working conventions for this repo
