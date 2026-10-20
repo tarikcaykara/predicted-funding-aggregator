@@ -1,51 +1,68 @@
-import { ColorType, createChart, CrosshairMode, LineSeries, LineType, type ISeriesApi, type LineSeriesPartialOptions, type Time, type UTCTimestamp } from "lightweight-charts";
+import { ColorType, createChart, CrosshairMode, HistogramSeries, LineSeries, type ISeriesApi, type LineWidth, type PriceFormatCustom, type Time, type UTCTimestamp } from "lightweight-charts";
 import { isCoinSymbol, type CoinSymbol } from "../src/coins.ts";
+import { VENUES } from "../src/funding/universe.ts"; // pure module: placeholder pip count before the first snapshot
 import { CLOSE, HISTORY_LIMIT, type ClientMessage, type ServerMessage } from "../src/protocol.ts";
-import type { ComponentStatus, HistoryPoint, Snapshot } from "../src/types.ts";
+import type { ComponentStatus, HistoryPoint, MarketComponent, Snapshot } from "../src/types.ts";
 
 type Status = "Connecting" | "Connected" | "Rejected" | "Disconnected";
+type DataState = "waiting-data" | "waiting-oi" | "live" | "stale";
 
 const TOKEN_KEY = "coinalyze.token";
 const RECONNECT_MS = 3000;
+const WAIT_DATA = "waiting for data…";
+const WAIT_OI = "waiting for open interest…";
 const STATUS_LABEL: Record<ComponentStatus, string> = {
-  used: "used",
-  stale: "stale",
-  no_rate: "no predicted rate",
-  unlisted: "not listed",
+  used: "Used",
+  stale: "Excluded · stale",
+  no_rate: "Excluded · no predicted rate",
+  unlisted: "Excluded · not listed",
+};
+const CONN_DETAIL: Record<Status, string> = {
+  Disconnected: "Enter a token and connect.",
+  Connecting: "Opening live connection…",
+  Connected: "Live",
+  Rejected: "Token rejected. Check it and connect again.",
 };
 
 const $ = <T extends HTMLElement>(selector: string) => document.querySelector(selector) as T;
+const $$ = <T extends HTMLElement>(selector: string) => [...document.querySelectorAll<T>(selector)];
+const cell = (root: HTMLElement, selector: string) => root.querySelector(selector) as HTMLElement;
 
-const conn = $<HTMLElement>("#conn");
-const connLabel = $<HTMLElement>("#conn-label");
-const tokenForm = $<HTMLFormElement>("#token-form");
-const tokenInput = $<HTMLInputElement>("#token-input");
-const tokenToggle = $<HTMLButtonElement>("#token-toggle");
-const connectButton = $<HTMLButtonElement>("#token-connect");
-const tokenError = $<HTMLElement>("#token-error");
-const tabs = [...document.querySelectorAll<HTMLButtonElement>("#tabs .tab")];
-const chartEl = $<HTMLElement>("#chart");
-const chartCoin = $<HTMLElement>("#chart-coin");
+const app = $<HTMLElement>("#app");
+const tokenForm = $<HTMLFormElement>("#auth");
+const tokenInput = $<HTMLInputElement>("#token");
+const tokenToggle = $<HTMLButtonElement>("#toggle");
+const connectButton = $<HTMLButtonElement>("#connect");
+const connDetail = $<HTMLElement>("#conn-detail");
+const connLabels = $$<HTMLElement>("[data-conn-label]");
+const coinButtons = $$<HTMLButtonElement>("#coins .coin");
+const coinLabels = $$<HTMLElement>("[data-coin-label]");
+const age = $<HTMLElement>("#age");
+const pips = $<HTMLElement>("#pips");
+const historyWindow = $<HTMLElement>("#history-window");
 const venues = $<HTMLElement>("#venues");
 const venueRows = $<HTMLElement>("#venue-rows");
-const venueRow = $<HTMLTemplateElement>("#venue-row-tpl").content.firstElementChild as HTMLElement;
+const venueRow = $<HTMLTemplateElement>("#venue-row").content.firstElementChild as HTMLElement;
+const axisMin = $<HTMLElement>("[data-axis-min]");
+const axisMax = $<HTMLElement>("[data-axis-max]");
+const axisOi = $<HTMLElement>(".axis__oi");
 
 let socket: WebSocket | null = null;
-let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+let reconnectTimer: number | undefined;
 let coins: CoinSymbol[] = [];
 let intervalMs = Infinity;
-let selected: CoinSymbol = "ETH";
+let selected: CoinSymbol = "BTC";
 const history = new Map<CoinSymbol, HistoryPoint[]>();
 const latest = new Map<CoinSymbol, Snapshot>();
 
 const setStatus = (status: Status) => {
-  conn.dataset.state = status.toLowerCase();
-  connLabel.textContent = status;
-  const rejected = status === "Rejected";
-  tokenForm.dataset.invalid = String(rejected);
-  tokenInput.setAttribute("aria-invalid", String(rejected));
-  tokenError.hidden = !rejected;
-  connectButton.disabled = status === "Connecting";
+  app.dataset.conn = status.toLowerCase();
+  for (const label of connLabels) label.textContent = status;
+  connDetail.textContent = CONN_DETAIL[status];
+  tokenInput.setAttribute("aria-invalid", String(status === "Rejected"));
+  const connecting = status === "Connecting";
+  connectButton.disabled = connecting;
+  connectButton.textContent = connecting ? "Connecting…" : "Connect";
 };
 
 const send = (ws: WebSocket, msg: ClientMessage) => ws.send(JSON.stringify(msg));
@@ -57,11 +74,12 @@ const record = (point: HistoryPoint) => {
   history.set(point.symbol, list);
 };
 
-const signed = (v: number, digits: number) => `${v >= 0 ? "+" : ""}${v.toFixed(digits)}`;
+// ---- Formatting -----------------------------------------------------------
 
-const tone = (v: number) => (v > 0 ? "pos" : v < 0 ? "neg" : "neutral");
-
-// ---- KPIs -----------------------------------------------------------------
+const signed = (v: number, digits: number) => `${v < 0 ? "−" : "+"}${Math.abs(v).toFixed(digits)}`; // U+2212
+const usd = (v: number) => (v >= 1e9 ? `$${(v / 1e9).toFixed(2)}B` : v >= 1e6 ? `$${(v / 1e6).toFixed(2)}M` : `$${(v / 1e3).toFixed(1)}K`);
+const signClass = (v: number) => (v < 0 ? "is-neg" : "is-pos");
+const weightText = (w: number) => (w > 0 && w < 0.0005 ? "<0.1%" : `${(w * 100).toFixed(1)}%`);
 
 const formatAge = (ms: number) => {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -70,70 +88,112 @@ const formatAge = (ms: number) => {
   return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m ago`;
 };
 
-const renderKpi = (id: string, text: string | null, value: number | null, ts: number | null, note?: string) => {
-  const kpi = $<HTMLElement>(id);
-  const valueEl = kpi.querySelector(".kpi__value") as HTMLElement;
-  const metaEl = kpi.querySelector(".kpi__meta") as HTMLElement;
-  const waiting = text === null;
-  kpi.dataset.state = waiting ? "waiting" : "ready";
-  valueEl.textContent = text ?? "—";
-  valueEl.dataset.tone = waiting || value === null ? "neutral" : tone(value);
-  metaEl.textContent = ts === null ? "waiting for data…" : waiting && note !== undefined ? note : formatAge(Date.now() - ts);
-  kpi.dataset.stale = String(!waiting && ts !== null && Date.now() - ts > 3 * intervalMs);
+// ---- Headline -------------------------------------------------------------
+
+/** Stale beats waiting-oi, so an old snapshot is always flagged. */
+const dataState = (s: Snapshot | undefined): DataState =>
+  !s ? "waiting-data" : Date.now() - s.timestamp > 3 * intervalMs ? "stale" : s.oi_weighted_predicted_funding_rate === null ? "waiting-oi" : "live";
+
+const setMetric = (id: string, text: string, note: string | null, tone: string, waiting: boolean) => {
+  const value = $<HTMLElement>(`#${id}`);
+  value.textContent = text;
+  value.className = `metric__value ${waiting ? "is-waiting" : tone}`;
+  if (note === null) return;
+  const noteEl = $<HTMLElement>(`#${id}-note`);
+  noteEl.textContent = note;
+  noteEl.className = `metric__note${waiting ? " is-waiting" : ""}`;
 };
 
-const renderKpis = () => {
+const renderHeadline = () => {
   const s = latest.get(selected);
-  const ts = s?.timestamp ?? null;
-  const avg = s?.aggregated_predicted_funding_rate ?? null;
-  const oi = s?.oi_weighted_predicted_funding_rate ?? null;
-  renderKpi("#kpi-avg", avg === null ? null : `${signed(avg, 4)}%`, avg, ts);
-  renderKpi("#kpi-oiw", oi === null ? null : `${signed(oi, 4)}%`, oi, ts, "waiting for open interest…");
-  const spread = avg !== null && oi !== null ? oi - avg : null;
-  renderKpi("#kpi-spread", spread === null ? null : `${signed(spread, 4)} pp`, spread, ts, "waiting for open interest…");
-  renderKpi("#kpi-venues", s ? `${s.markets} / ${s.components.length}` : null, null, ts);
-};
-
-// ---- Per-venue breakdown --------------------------------------------------
-
-const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", notation: "compact", maximumFractionDigits: 2 });
-
-const cell = (row: HTMLElement, selector: string) => row.querySelector(selector) as HTMLElement;
-
-const renderVenues = () => {
-  const s = latest.get(selected);
+  app.dataset.data = dataState(s);
+  for (const button of coinButtons) {
+    const oi = latest.get(button.dataset.coin as CoinSymbol)?.oi_weighted_predicted_funding_rate ?? null;
+    cell(button, ".coin__val").textContent = oi === null ? "—" : signed(oi, 5);
+  }
+  age.textContent = s ? formatAge(Date.now() - s.timestamp) : "—";
   if (!s) {
-    venues.dataset.empty = "true";
-    venueRows.replaceChildren();
+    for (const id of ["m-avg", "m-oi", "m-sp"]) setMetric(id, "—", WAIT_DATA, "", true);
+    setMetric("m-ven", "—", null, "", true);
+    pips.replaceChildren(...VENUES.map(() => Object.assign(document.createElement("span"), { className: "pip" })));
     return;
   }
-  venues.dataset.empty = "false";
-  const oiTotal = s.components
-    .filter((c) => c.status === "used")
-    .reduce((sum, c) => sum + (c.oi_usd !== null && c.oi_usd > 0 ? c.oi_usd : 0), 0);
-  // Outlier: |Per 8h − AVG| > 1σ (population) of the used venues' rates.
   const avg = s.aggregated_predicted_funding_rate;
-  const rates = s.components.flatMap((c) => (c.status === "used" && c.rate_8h !== null ? [c.rate_8h] : []));
-  const sigma = rates.length === 0 ? 0 : Math.sqrt(rates.reduce((sum, r) => sum + (r - avg) ** 2, 0) / rates.length);
-  venueRows.replaceChildren(
-    ...s.components.map((c) => {
-      const used = c.status === "used";
-      const weight = used && c.oi_usd !== null && c.oi_usd > 0 && oiTotal > 0 ? c.oi_usd / oiTotal : null;
+  const oi = s.oi_weighted_predicted_funding_rate;
+  setMetric("m-avg", signed(avg, 5), `% per 8h · ${avg < 0 ? "negative" : "positive"}`, signClass(avg), false);
+  if (oi === null) {
+    setMetric("m-oi", "—", WAIT_OI, "", true);
+    setMetric("m-sp", "—", WAIT_OI, "", true);
+  } else {
+    const sp = oi - avg;
+    setMetric("m-oi", signed(oi, 5), `% per 8h · ${oi < 0 ? "negative" : "positive"}`, signClass(oi), false);
+    setMetric("m-sp", signed(sp, 5), "pp · OI-weighted − AVG", signClass(sp), false);
+  }
+  setMetric("m-ven", `${s.markets} / ${s.components.length}`, null, "", false);
+  pips.replaceChildren(...s.components.map((c) => Object.assign(document.createElement("span"), { className: c.status === "used" ? "pip pip--used" : "pip pip--excluded" })));
+};
+
+// ---- Per-venue number line ------------------------------------------------
+
+/** `FundingSource.component` guarantees used ⇒ rate_8h !== null; the guard only narrows the type. */
+const onLine = (c: MarketComponent): c is MarketComponent & { rate_8h: number } => c.status === "used" && c.rate_8h !== null;
+
+const renderVenues = () => {
+  venueRows.replaceChildren();
+  const s = latest.get(selected);
+  if (!s) return; // CSS hides the table on waiting-data
+  const avg = s.aggregated_predicted_funding_rate;
+  const oi = s.oi_weighted_predicted_funding_rate;
+  const used = s.components.filter(onLine).sort((a, b) => b.rate_8h - a.rate_8h);
+  const rows = [...used, ...s.components.filter((c) => !onLine(c))];
+  const oiSum = used.reduce((sum, c) => sum + (c.oi_usd ?? 0), 0);
+
+  // Shared axis over every on-line rate, AVG, OI-weighted and zero.
+  const vals = [...used.map((c) => c.rate_8h), avg, 0, ...(oi === null ? [] : [oi])];
+  let mn = Math.min(...vals);
+  let mx = Math.max(...vals);
+  const pad = (mx - mn) * 0.08 || 0.0001; // guards a zero span
+  mn -= pad;
+  mx += pad;
+  const pos = (v: number) => `${(((v - mn) / (mx - mn)) * 100).toFixed(2)}%`;
+  venues.style.setProperty("--zero", pos(0));
+  venues.style.setProperty("--avg", pos(avg));
+  if (oi !== null) venues.style.setProperty("--oi", pos(oi));
+  const near = (v: number) => Math.abs(v) / (mx - mn) < 0.1;
+  const minT = near(mn) ? "" : signed(mn, 4);
+  const maxT = near(mx) ? "" : signed(mx, 4);
+  axisMin.textContent = minT;
+  axisMax.textContent = maxT;
+  axisOi.hidden = oi === null;
+
+  venueRows.append(
+    ...rows.map((c) => {
+      const live = onLine(c);
+      const w = oi !== null && live && c.oi_usd !== null && oiSum > 0 ? c.oi_usd / oiSum : null;
       const row = venueRow.cloneNode(true) as HTMLElement;
       row.dataset.status = c.status;
-      cell(row, ".vrow__venue").textContent = c.venue;
-      cell(row, ".vrow__symbol").textContent = c.symbol ?? "—";
-      cell(row, ".vrow__pred").textContent = c.predicted_rate === null ? "—" : `${signed(c.predicted_rate, 5)}%`;
-      cell(row, ".vrow__period").textContent = `${c.rate_period_hours}h`;
-      const p8 = cell(row, ".vrow__p8");
-      cell(p8, ".p8-val").textContent = c.rate_8h === null ? "—" : `${signed(c.rate_8h, 4)}%`;
-      p8.dataset.tone = c.rate_8h === null ? "neutral" : tone(c.rate_8h);
-      const outlier = used && c.rate_8h !== null && Math.abs(c.rate_8h - avg) > sigma;
-      p8.dataset.outlier = String(outlier);
-      if (outlier) p8.title = "More than 1σ from AVG";
-      cell(row, ".vrow__oi").textContent = c.oi_usd === null ? "—" : usd.format(c.oi_usd);
-      cell(row, ".vrow__weight").textContent = weight === null ? "—" : `${(weight * 100).toFixed(1)}%`;
-      cell(row, ".status").textContent = STATUS_LABEL[c.status];
+      if (c.status !== "used") row.classList.add("is-excluded");
+      if (c.rate_8h !== null && c.rate_8h < 0) row.classList.add("is-neg-rate");
+      cell(row, ".v__name").textContent = c.venue;
+      cell(row, ".v__sym").textContent = c.symbol ?? "—";
+      cell(row, ".v__pred").textContent = c.predicted_rate === null ? "—" : signed(c.predicted_rate, 5);
+      cell(row, ".v__per").textContent = `${c.rate_period_hours}h`;
+      const r8 = cell(row, ".v__r8-val");
+      r8.textContent = c.rate_8h === null ? "—" : signed(c.rate_8h, 4);
+      if (live) r8.className = `v__r8-val ${signClass(c.rate_8h)}`;
+      // The design shows "—" for every OI cell until OI-weighted exists.
+      cell(row, ".v__oi").textContent = oi === null || c.oi_usd === null ? "—" : usd(c.oi_usd);
+      cell(row, ".v__w").textContent = w === null ? "—" : weightText(w);
+      cell(row, ".tick-min").textContent = minT;
+      cell(row, ".tick-max").textContent = maxT;
+      cell(row, ".track__oi").hidden = oi === null;
+      cell(row, ".tick-oi").hidden = oi === null;
+      cell(row, ".badge").textContent = STATUS_LABEL[c.status];
+      if (live) {
+        const track = cell(row, ".track");
+        track.style.setProperty("--x", pos(c.rate_8h));
+        track.style.setProperty("--w", w === null ? "0.3" : Math.sqrt(w).toFixed(3)); // dot area ∝ weight
+      }
       return row;
     }),
   );
@@ -150,55 +210,61 @@ const localTime = (time: Time, withSeconds: boolean) =>
 
 /** Design tokens from `style.css`; the chart draws on a canvas and cannot use CSS directly. */
 const cssVar = (name: string) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-const chartFontSize = Number.parseInt(cssVar("--fs-xs"), 10);
+const px = (name: string) => Number.parseInt(cssVar(name), 10);
 
-const chart = createChart($<HTMLDivElement>("#chart-canvas"), {
+const chart = createChart($<HTMLDivElement>("#chart"), {
   autoSize: true,
   layout: {
-    background: { type: ColorType.Solid, color: cssVar("--color-chart-bg") },
-    textColor: cssVar("--color-chart-text"),
-    fontFamily: cssVar("--font-num"),
-    fontSize: chartFontSize,
+    background: { type: ColorType.Solid, color: "transparent" },
+    textColor: cssVar("--chart-text"),
+    fontFamily: cssVar("--font-mono"),
+    fontSize: px("--chart-font-size"),
   },
-  grid: { vertLines: { color: cssVar("--color-chart-grid") }, horzLines: { color: cssVar("--color-chart-grid") } },
-  rightPriceScale: { borderColor: cssVar("--color-chart-grid"), scaleMargins: { top: 0.12, bottom: 0.12 } },
-  timeScale: { borderColor: cssVar("--color-chart-grid"), timeVisible: true, secondsVisible: false, tickMarkFormatter: (t: Time) => localTime(t, false) },
-  crosshair: { mode: CrosshairMode.Normal, vertLine: { color: cssVar("--color-chart-crosshair") }, horzLine: { color: cssVar("--color-chart-crosshair") } },
+  grid: { vertLines: { color: cssVar("--chart-grid") }, horzLines: { color: cssVar("--chart-grid") } },
+  rightPriceScale: { borderVisible: false },
+  timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false, tickMarkFormatter: (t: Time) => localTime(t, false) },
+  crosshair: { mode: CrosshairMode.Normal },
   localization: { timeFormatter: (t: Time) => localTime(t, true) },
 });
 
 // Canvas text does not redraw when the web font arrives.
-void document.fonts.load(`${chartFontSize}px "IBM Plex Mono"`).then(() => chart.applyOptions({ layout: { fontFamily: cssVar("--font-num") } }));
+void document.fonts.load(`${px("--chart-font-size")}px "JetBrains Mono"`).then(() => chart.applyOptions({ layout: { fontFamily: cssVar("--font-mono") } }));
 
-const lineStyle: LineSeriesPartialOptions = {
-  lineWidth: 2,
-  lineType: LineType.WithSteps,
-  priceFormat: { type: "custom", minMove: 0.0001, formatter: (p: number) => `${signed(p, 4)}%` },
-  priceLineVisible: true,
-  lastValueVisible: true,
-};
+const priceFormat: PriceFormatCustom = { type: "custom", minMove: 0.00001, formatter: (p: number) => signed(p, 4) };
+const lineWidth = (px("--chart-line-width") || 2) as LineWidth;
+const spreadPos = cssVar("--chart-spread-pos");
+const spreadNeg = cssVar("--chart-spread-neg");
 
-interface Line {
-  series: ISeriesApi<"Line">;
+interface Track {
+  series: ISeriesApi<"Line" | "Histogram">;
   pick: (p: HistoryPoint) => number | null;
+  /** Per-point colour (spread bars). */
+  tint?: (v: number) => string;
   lastTime: number;
 }
 
-const lines: Line[] = [
+const tracks: Track[] = [
   {
-    series: chart.addSeries(LineSeries, { ...lineStyle, color: cssVar("--color-chart-avg"), title: "AVG" }),
+    series: chart.addSeries(LineSeries, { color: cssVar("--chart-avg"), lineWidth, priceFormat, priceLineVisible: false, title: "AVG" }),
     pick: (p) => p.aggregated_predicted_funding_rate,
     lastTime: 0,
   },
   {
-    series: chart.addSeries(LineSeries, { ...lineStyle, color: cssVar("--color-chart-oiw"), title: "OI-w" }),
+    series: chart.addSeries(LineSeries, { color: cssVar("--chart-oi"), lineWidth, priceFormat, priceLineVisible: false, title: "OI-w" }),
     pick: (p) => p.oi_weighted_predicted_funding_rate,
     lastTime: 0,
   },
+  {
+    series: chart.addSeries(HistogramSeries, { priceFormat, priceLineVisible: false, title: "Spread" }, 1),
+    pick: (p) => (p.oi_weighted_predicted_funding_rate === null ? null : p.oi_weighted_predicted_funding_rate - p.aggregated_predicted_funding_rate),
+    tint: (v) => (v < 0 ? spreadNeg : spreadPos),
+    lastTime: 0,
+  },
 ];
+chart.panes()[1]?.setHeight(px("--chart-spread-pane"));
 
 /** One point per second (last value wins), ascending, as lightweight-charts requires. */
-const toPoints = (points: HistoryPoint[], pick: Line["pick"]) => {
+const toPoints = (points: HistoryPoint[], pick: Track["pick"]) => {
   const bySecond = new Map<number, number>();
   for (const p of [...points].sort((a, b) => a.timestamp - b.timestamp)) {
     const value = pick(p);
@@ -209,47 +275,48 @@ const toPoints = (points: HistoryPoint[], pick: Line["pick"]) => {
 
 const rebuildChart = () => {
   const points = history.get(selected) ?? [];
-  chartEl.dataset.empty = String(points.length === 0);
-  for (const line of lines) {
-    const data = toPoints(points, line.pick);
-    line.series.setData(data);
-    line.lastTime = data.at(-1)?.time ?? 0;
+  for (const track of tracks) {
+    const data = toPoints(points, track.pick);
+    const { tint } = track;
+    track.series.setData(tint === undefined ? data : data.map((d) => ({ ...d, color: tint(d.value) })));
+    track.lastTime = data.at(-1)?.time ?? 0;
   }
   chart.timeScale().fitContent();
 };
 
 const pushPoint = (p: HistoryPoint) => {
   const time = Math.floor(p.timestamp / 1000);
-  for (const line of lines) {
-    const value = line.pick(p);
+  for (const track of tracks) {
+    const value = track.pick(p);
     // update() rejects points older than the last one.
-    if (value === null || time < line.lastTime) continue;
-    line.series.update({ time: time as UTCTimestamp, value });
-    line.lastTime = time;
+    if (value === null || time < track.lastTime) continue;
+    const point = { time: time as UTCTimestamp, value };
+    track.series.update(track.tint === undefined ? point : { ...point, color: track.tint(value) });
+    track.lastTime = time;
   }
 };
 
-// ---- Tabs -----------------------------------------------------------------
+// ---- Coins ----------------------------------------------------------------
 
 const select = (coin: CoinSymbol) => {
   selected = coin;
-  for (const tab of tabs) tab.setAttribute("aria-selected", String(tab.dataset.coin === coin));
-  chartCoin.textContent = coin;
-  renderKpis();
+  for (const button of coinButtons) button.setAttribute("aria-selected", String(button.dataset.coin === coin));
+  for (const label of coinLabels) label.textContent = coin;
+  renderHeadline();
   renderVenues();
   rebuildChart();
 };
 
-/** Shows only the tabs of the coins the server publishes and keeps a valid selection. */
+/** Shows only the coins the server publishes and keeps a valid selection. */
 const applyCoins = () => {
-  for (const tab of tabs) tab.hidden = !coins.includes(tab.dataset.coin as CoinSymbol);
-  const initial = coins.includes(selected) ? selected : coins.includes("ETH") ? "ETH" : coins[0];
+  for (const button of coinButtons) button.hidden = !coins.includes(button.dataset.coin as CoinSymbol);
+  const initial = coins.includes(selected) ? selected : coins[0];
   if (initial !== undefined) select(initial);
 };
 
-for (const tab of tabs) {
-  tab.addEventListener("click", () => {
-    const coin = tab.dataset.coin ?? "";
+for (const button of coinButtons) {
+  button.addEventListener("click", () => {
+    const coin = button.dataset.coin ?? "";
     if (isCoinSymbol(coin)) select(coin);
   });
 }
@@ -263,6 +330,7 @@ const handle = (ws: WebSocket, msg: ServerMessage) => {
         setStatus("Connected");
         coins = msg.coins;
         intervalMs = msg.interval_ms;
+        historyWindow.textContent = `${Math.max(1, Math.round((HISTORY_LIMIT * intervalMs) / 3_600_000))}h`;
         applyCoins();
       }
       return;
@@ -284,11 +352,10 @@ const handle = (ws: WebSocket, msg: ServerMessage) => {
       record(point);
       latest.set(msg.symbol, msg);
       if (msg.symbol === selected) {
-        chartEl.dataset.empty = "false";
         pushPoint(point);
-        renderKpis();
         renderVenues();
       }
+      renderHeadline(); // other coins' buttons update too
       return;
     }
   }
@@ -318,7 +385,7 @@ const connect = () => {
       return;
     }
     setStatus("Disconnected");
-    reconnectTimer = setTimeout(connect, RECONNECT_MS);
+    reconnectTimer = window.setTimeout(connect, RECONNECT_MS);
   };
 };
 
@@ -339,7 +406,7 @@ tokenToggle.addEventListener("click", () => {
   tokenToggle.setAttribute("aria-label", reveal ? "Hide token" : "Show token");
 });
 
-setInterval(renderKpis, 1000);
+setInterval(renderHeadline, 1000);
 
 select(selected);
 

@@ -8,7 +8,7 @@
 
 A self-hosted Bun + TypeScript service that computes the cross-venue **aggregated predicted funding rate** for BTC, ETH and SOL from the official Coinalyze API, normalized to % per 8h, and streams it over an authenticated WebSocket. Every published number can be traced to its venues: a live dashboard shows the simple and open-interest-weighted averages next to the per-venue breakdown they come from.
 
-![Live dashboard: AVG, OI-weighted, spread, venues used and the per-venue breakdown for ETH](docs/dashboard.png)
+![Live dashboard, Number Line view for ETH: AVG, OI-weighted, spread and venues used, the history chart with its spread pane, and every venue as a dot on a shared rate axis](docs/dashboard.png)
 
 ## Why
 
@@ -132,7 +132,9 @@ bun install
 bun run start           # dashboard on http://localhost:3000, WebSocket on /ws
 ```
 
-Open the dashboard and enter your `AUTH_TOKEN`. It is masked by default; **Show** reveals it and **Hide** masks it again. The token is kept in the browser's `localStorage`, so the page reconnects on reload. A square next to a venue's Per 8h value marks a rate more than 1σ (population standard deviation of the `used` venues) away from AVG. The figures get a **STALE** badge when the last snapshot is older than three poll intervals. On screens narrower than 960 px the per-venue table becomes one card per venue, so no column is cut off on phones or tablets.
+Open the dashboard and enter your `AUTH_TOKEN`. It is masked by default; **Show** reveals it and **Hide** masks it again. The token is kept in the browser's `localStorage`, so the page reconnects on reload. Each coin button shows that coin's OI-weighted rate. Below the chart, every venue is a dot on a shared rate axis with AVG and OI-weighted markers: the dot's area is proportional to the venue's OI weight, rows are sorted by 8h rate, and excluded venues are struck through and hatched. The chart's lower pane shows the spread (OI-weighted − AVG). The data age and every headline value get a **STALE** marker when the last snapshot is older than three poll intervals. On screens narrower than 1100 px the sidebar moves above the content and each venue becomes a card.
+
+The previous "Ledger" dashboard (v3.1) is archived at tag `v3.1.0`; its design export is in `design/handoff/ledger/`. To switch back: `git rm -r -q web && git checkout v3.1.0 -- web`, then run `bun run typecheck`. It flags anything in `web/app.ts` that a later protocol change broke.
 
 Bun loads `.env` automatically, so no `dotenv` package is needed.
 
@@ -253,8 +255,8 @@ src/
   funding/universe.ts        the ten venues and their rate periods
   funding/aggregate.ts       AVG / OI-weighted (pure)
   funding/source.ts          FundingSource (venue resolution, rolling OI, staleness, components)
-web/                         dashboard (Bun HTML import + lightweight-charts, IBM Plex fonts)
-design/handoff/              reference export of the dashboard design (not shipped in the image)
+web/                         dashboard (Bun HTML import + lightweight-charts, JetBrains Mono + Space Grotesk fonts)
+design/handoff/              design exports: number-line/ (current), ledger/ (v3.1, archived); not shipped in the image
 scripts/calibrate/           offline calibration (Playwright; dev dependency)
 test/                        bun:test suites
 ```

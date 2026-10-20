@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Predicted Funding Aggregator · all states</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="board" id="board">
+  <header class="board__head">
+    <h1 class="board__title">Predicted Funding Aggregator · direction 1b “Number Line”</h1>
+    <p class="board__intro">Every state of index.html at 1440, 768 and 390px. Each frame is the real page in an iframe, so breakpoints are the actual media queries. Open <a href="index.html">index.html</a> on its own to interact: switch coins, Show/Hide the token, and Connect (an empty token is rejected).</p>
+    <div class="board__tools"><span>Zoom</span><button type="button" data-scale="0.35">35%</button><button type="button" data-scale="0.5" aria-pressed="true">50%</button><button type="button" data-scale="1">100%</button></div>
+    <nav class="board__index" id="index"></nav>
+  </header>
+</div>
+<script>
+(function () {
+  var STATES = [
+    ['disconnected', 'Disconnected', 'No token entered yet, nothing received. Token field is empty and shows the AUTH_TOKEN placeholder; every headline reads “—” with “waiting for data…”.', 'state=disconnected'],
+    ['connecting', 'Connecting', 'Connect pressed. Status pulses, the button is disabled and reads “Connecting…”. Token hidden (button “Show”).', 'state=connecting'],
+    ['rejected', 'Rejected (invalid token)', 'Server refused the token. Field border and status turn negative; the token is visible (button “Hide”) so it can be checked.', 'state=rejected&token=visible'],
+    ['waiting-data', 'Connected · before the first snapshot', 'Connection is up, no snapshot yet. Headline values are “—” with “waiting for data…”; chart and venue breakdown are empty.', 'state=waiting-data'],
+    ['waiting-oi', 'Connected · no open interest yet', 'Rates have arrived, open interest has not. AVG and Venues used are filled; OI-weighted and Spread show “—” with “waiting for open interest…”. OI and weight columns read “—”, dots are uniform, the OI marker is hidden.', 'state=waiting-oi'],
+    ['live-btc', 'Live · BTC (token hidden)', 'Real values from funding_rate.json. 7 of 10 venues used; DERIBIT, HUOBI and OKX excluded for no predicted rate. Token hidden, button “Show”.', 'state=live&coin=BTC'],
+    ['live-sol', 'Live · SOL (token visible)', 'SOL has a negative venue rate (BYBIT USDT −0.0018) holding 27% of open interest, which pulls OI-weighted well below AVG. Token visible, button “Hide”.', 'state=live&coin=SOL&token=visible'],
+    ['stale', 'STALE · ETH', 'The last snapshot is older than three polling intervals. Data age turns to the stale color and every headline value carries a STALE marker.', 'state=stale&coin=ETH'],
+    ['statuses', 'All exclusion reasons · SOL (fixture)', 'Fixture, not live data: WOO X is flagged stale and DERIBIT not listed so that every status renders next to the real “no predicted rate” venues. AVG and OI-weighted are recomputed from the remaining 6 venues.', 'state=live&coin=SOL&fixture=statuses']
+  ];
+  var WIDTHS = [1440, 768, 390];
+  var board = document.getElementById('board'), index = document.getElementById('index');
+  STATES.forEach(function (s) {
+    var sec = document.createElement('section');
+    sec.className = 'state'; sec.id = s[0];
+    sec.innerHTML = '<h2 class="state__title">' + s[1] + '</h2><p class="state__desc">' + s[2] + '</p><div class="state__row"></div>';
+    var row = sec.querySelector('.state__row');
+    WIDTHS.forEach(function (w) {
+      var id = s[0] + '-' + w, f = document.createElement('div');
+      f.className = 'frame';
+      f.style.setProperty('--fw', w + 'px');
+      f.style.setProperty('--fh', '700px');
+      f.innerHTML = '<span class="frame__label">' + w + 'px</span><div class="frame__clip"><iframe loading="lazy" title="' + s[1] + ' at ' + w + 'px" src="index.html?' + s[3] + '&frame=' + id + '"></iframe></div>';
+      f.dataset.frame = id;
+      row.appendChild(f);
+    });
+    board.appendChild(sec);
+    var a = document.createElement('a'); a.href = '#' + s[0]; a.textContent = s[1]; index.appendChild(a);
+  });
+  window.addEventListener('message', function (e) {
+    if (!e.data || e.data.type !== 'pfa-height') return;
+    var f = document.querySelector('[data-frame="' + e.data.id + '"]');
+    if (f) f.style.setProperty('--fh', e.data.h + 'px');
+  });
+  document.querySelector('.board__tools').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-scale]'); if (!b) return;
+    document.documentElement.style.setProperty('--board-scale', b.dataset.scale);
+    document.querySelectorAll('[data-scale]').forEach(function (x) { x.setAttribute('aria-pressed', String(x === b)); });
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Predicted Funding Aggregator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app" id="app" data-conn="disconnected" data-data="waiting-data">
+
+  <aside class="side">
+    <header class="brand">
+      <div>
+        <h1 class="brand__title">Predicted Funding<br> Aggregator</h1>
+        <p class="brand__sub">% per 8h · 10 venues</p>
+      </div>
+      <span class="conn-pill" aria-hidden="true"><span class="status-dot"></span><span data-conn-label>Disconnected</span></span>
+    </header>
+
+    <form class="auth" id="auth" novalidate>
+      <label class="label" for="token">Access token</label>
+      <div class="auth__row">
+        <div class="field">
+          <input class="field__input" id="token" name="token" type="password" placeholder="AUTH_TOKEN" autocomplete="off" spellcheck="false">
+          <button class="field__toggle" id="toggle" type="button" aria-controls="token" aria-pressed="false">Show</button>
+        </div>
+        <button class="btn" id="connect" type="submit">Connect</button>
+      </div>
+      <p class="status" role="status" aria-live="polite"><span class="status-dot"></span><span class="status__label" data-conn-label>Disconnected</span><span class="status__detail" id="conn-detail">Enter a token and connect.</span></p>
+    </form>
+
+    <section class="coins" aria-label="Coin">
+      <h2 class="label">Coin · OI-weighted</h2>
+      <div class="coins__list" role="tablist" id="coins">
+        <button class="coin" role="tab" type="button" data-coin="BTC" aria-selected="true"><span class="coin__sym">BTC</span><span class="coin__val">—</span></button>
+        <button class="coin" role="tab" type="button" data-coin="ETH" aria-selected="false"><span class="coin__sym">ETH</span><span class="coin__val">—</span></button>
+        <button class="coin" role="tab" type="button" data-coin="SOL" aria-selected="false"><span class="coin__sym">SOL</span><span class="coin__val">—</span></button>
+      </div>
+    </section>
+
+    <section class="fresh" aria-label="Data freshness">
+      <span class="label">Data age</span>
+      <div class="fresh__row"><span class="fresh__age" id="age">—</span><span class="chip-stale">STALE</span></div>
+      <p class="fresh__note">Older than three polling intervals.</p>
+    </section>
+  </aside>
+
+  <main class="main">
+    <section class="metrics" aria-label="Headline values">
+      <div class="metric">
+        <div class="metric__head"><span class="swatch swatch--avg"></span><span>AVG · <span data-coin-label>BTC</span></span><span class="chip-stale">STALE</span></div>
+        <div class="metric__value is-waiting" id="m-avg">—</div>
+        <div class="metric__note is-waiting" id="m-avg-note">waiting for data…</div>
+      </div>
+      <div class="metric">
+        <div class="metric__head"><span class="swatch swatch--oi"></span><span>OI-weighted · <span data-coin-label>BTC</span></span><span class="chip-stale">STALE</span></div>
+        <div class="metric__value is-waiting" id="m-oi">—</div>
+        <div class="metric__note is-waiting" id="m-oi-note">waiting for data…</div>
+      </div>
+      <div class="metric">
+        <div class="metric__head"><span>Spread</span><span class="chip-stale">STALE</span></div>
+        <div class="metric__value is-waiting" id="m-sp">—</div>
+        <div class="metric__note is-waiting" id="m-sp-note">waiting for data…</div>
+      </div>
+      <div class="metric">
+        <div class="metric__head"><span>Venues used</span><span class="chip-stale">STALE</span></div>
+        <div class="metric__value is-waiting" id="m-ven">—</div>
+        <div class="pips" id="pips" aria-hidden="true"></div>
+      </div>
+    </section>
+
+    <section class="panel" aria-label="History">
+      <div class="panel__head">
+        <h2 class="panel__title">History · 12h</h2>
+        <div class="legend">
+          <span class="legend__item"><span class="legend__line legend__line--avg"></span>AVG</span>
+          <span class="legend__item"><span class="legend__line legend__line--oi"></span>OI-weighted <span class="legend__wait">· waiting for open interest…</span></span>
+          <span class="legend__item"><span class="legend__bar"></span>Spread (lower pane)</span>
+        </div>
+      </div>
+      <div class="chart__frame">
+        <div class="chart__canvas" id="chart"></div>
+        <div class="chart__empty">waiting for data…</div>
+      </div>
+    </section>
+
+    <section class="panel venues" id="venues" aria-label="Venue breakdown">
+      <div class="panel__head">
+        <h2 class="panel__title">Venues · <span data-coin-label>BTC</span></h2>
+        <div class="legend">
+          <span class="legend__item"><span class="legend__dot"></span>dot area ∝ OI weight</span>
+          <span class="legend__item"><span class="legend__line legend__line--avg"></span>AVG</span>
+          <span class="legend__item"><span class="legend__line legend__line--oi"></span>OI-weighted</span>
+          <span class="legend__item"><span class="legend__hatch"></span>excluded</span>
+        </div>
+      </div>
+      <table class="vt">
+        <thead>
+          <tr>
+            <th scope="col">Venue · symbol</th>
+            <th scope="col"><div class="axis" aria-hidden="true"><span class="axis__min" data-axis-min></span><span class="axis__zero">0</span><span class="axis__max" data-axis-max></span><span class="axis__avg">AVG</span><span class="axis__oi">OI</span></div><span class="sr-only">Rate on shared axis</span></th>
+            <th scope="col" class="r">Predicted</th>
+            <th scope="col">Per</th>
+            <th scope="col" class="r">Rate 8h</th>
+            <th scope="col" class="r">Open int.</th>
+            <th scope="col" class="r">Weight</th>
+            <th scope="col">Status</th>
+          </tr>
+        </thead>
+        <tbody id="venue-rows"></tbody>
+      </table>
+      <p class="venues__empty">waiting for data…</p>
+      <p class="venues__note">Sorted by 8h rate. Excluded venues are not part of AVG or OI-weighted.</p>
+    </section>
+  </main>
+
+  <footer class="foot">Data source: <a href="https://coinalyze.net" target="_blank" rel="noopener">Coinalyze</a> · Educational project. Not affiliated with Coinalyze.</footer>
+</div>
+
+<template id="venue-row">
+  <tr class="v">
+    <th scope="row" class="v__venue"><span class="v__name"></span><span class="v__sym"></span></th>
+    <td class="v__track"><div class="track"><span class="track__zero"></span><span class="track__avg"></span><span class="track__oi"></span><span class="track__dot"></span><span class="track__excl">excluded</span></div><div class="track__ticks" aria-hidden="true"><span class="tick-min"></span><span class="tick-zero">0</span><span class="tick-max"></span><span class="tick-avg">AVG</span><span class="tick-oi">OI</span></div></td>
+    <td class="v__num v__pred" data-label="Predicted"></td>
+    <td class="v__per" data-label="Period"></td>
+    <td class="v__num v__r8"><span class="v__r8-val"></span><span class="v__r8-unit">per 8h</span></td>
+    <td class="v__num v__oi" data-label="Open int."></td>
+    <td class="v__num v__w" data-label="Weight"></td>
+    <td class="v__status"><span class="badge"></span></td>
+  </tr>
+</template>
+
+<script src="vendor/lightweight-charts.standalone.production.js"></script>
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
