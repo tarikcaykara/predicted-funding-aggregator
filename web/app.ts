@@ -1,4 +1,4 @@
-import { ColorType, createChart, CrosshairMode, HistogramSeries, LineSeries, type ISeriesApi, type LineWidth, type PriceFormatCustom, type Time, type UTCTimestamp } from "lightweight-charts";
+import { ColorType, createChart, CrosshairMode, HistogramSeries, LineSeries, TickMarkType, type ISeriesApi, type LineData, type LineWidth, type PriceFormatCustom, type Time, type UTCTimestamp, type WhitespaceData } from "lightweight-charts";
 import { isCoinSymbol, type CoinSymbol } from "../src/coins.ts";
 import { VENUES } from "../src/funding/universe.ts"; // pure module: placeholder pip count before the first snapshot
 import { CLOSE, HISTORY_LIMIT, type ClientMessage, type ServerMessage } from "../src/protocol.ts";
@@ -54,6 +54,8 @@ let intervalMs = Infinity;
 let selected: CoinSymbol = "BTC";
 const history = new Map<CoinSymbol, HistoryPoint[]>();
 const latest = new Map<CoinSymbol, Snapshot>();
+/** Three poll intervals: older data is flagged STALE, and a longer pause between points is drawn as a gap. */
+const staleAfterMs = () => 3 * intervalMs;
 
 const setStatus = (status: Status) => {
   app.dataset.conn = status.toLowerCase();
@@ -92,7 +94,7 @@ const formatAge = (ms: number) => {
 
 /** Stale beats waiting-oi, so an old snapshot is always flagged. */
 const dataState = (s: Snapshot | undefined): DataState =>
-  !s ? "waiting-data" : Date.now() - s.timestamp > 3 * intervalMs ? "stale" : s.oi_weighted_predicted_funding_rate === null ? "waiting-oi" : "live";
+  !s ? "waiting-data" : Date.now() - s.timestamp > staleAfterMs() ? "stale" : s.oi_weighted_predicted_funding_rate === null ? "waiting-oi" : "live";
 
 const setMetric = (id: string, text: string, note: string | null, tone: string, waiting: boolean) => {
   const value = $<HTMLElement>(`#${id}`);
@@ -208,6 +210,9 @@ const localTime = (time: Time, withSeconds: boolean) =>
     second: withSeconds ? "2-digit" : undefined,
   });
 
+const localDate = (time: Time) =>
+  new Date((time as UTCTimestamp) * 1000).toLocaleDateString([], { month: "short", day: "numeric" });
+
 /** Design tokens from `style.css`; the chart draws on a canvas and cannot use CSS directly. */
 const cssVar = (name: string) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 const px = (name: string) => Number.parseInt(cssVar(name), 10);
@@ -222,9 +227,15 @@ const chart = createChart($<HTMLDivElement>("#chart"), {
   },
   grid: { vertLines: { color: cssVar("--chart-grid") }, horzLines: { color: cssVar("--chart-grid") } },
   rightPriceScale: { borderVisible: false },
-  timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false, tickMarkFormatter: (t: Time) => localTime(t, false) },
+  timeScale: {
+    borderVisible: false,
+    timeVisible: true,
+    secondsVisible: false,
+    // The library picks the tick type by UTC day; the label shows that point's local date.
+    tickMarkFormatter: (t: Time, type: TickMarkType) => (type === TickMarkType.Time || type === TickMarkType.TimeWithSeconds ? localTime(t, false) : localDate(t)),
+  },
   crosshair: { mode: CrosshairMode.Normal },
-  localization: { timeFormatter: (t: Time) => localTime(t, true) },
+  localization: { timeFormatter: (t: Time) => `${localDate(t)} ${localTime(t, true)}` },
 });
 
 // Canvas text does not redraw when the web font arrives.
@@ -263,14 +274,34 @@ const tracks: Track[] = [
 ];
 chart.panes()[1]?.setHeight(px("--chart-spread-pane"));
 
-/** One point per second (last value wins), ascending, as lightweight-charts requires. */
-const toPoints = (points: HistoryPoint[], pick: Track["pick"]) => {
-  const bySecond = new Map<number, number>();
+type ChartPoint = LineData<UTCTimestamp> | WhitespaceData<UTCTimestamp>;
+
+/**
+ * One point per second (last value wins), ascending, as lightweight-charts requires. After any pause longer than
+ * staleAfterMs() a whitespace point marks the gap on the index-based time scale, and the last valued point before it
+ * is transparent: a line series skips whitespace and strokes segment i-1 → i in item i-1's colour, so that hides the
+ * segment joining across the downtime. Gaps are detected from every point, including ones `pick` skips, so all
+ * tracks break together.
+ */
+const toPoints = (points: HistoryPoint[], pick: Track["pick"]): ChartPoint[] => {
+  const bySecond = new Map<number, ChartPoint>();
+  let prev: number | undefined;
+  let lastValued: LineData<UTCTimestamp> | undefined;
   for (const p of [...points].sort((a, b) => a.timestamp - b.timestamp)) {
+    const time = Math.floor(p.timestamp / 1000) as UTCTimestamp;
+    if (prev !== undefined && p.timestamp - prev > staleAfterMs()) {
+      const gap = (Math.floor(prev / 1000) + 1) as UTCTimestamp;
+      if (gap < time) bySecond.set(gap, { time: gap });
+      if (lastValued !== undefined) lastValued.color = "transparent";
+    }
+    prev = p.timestamp;
     const value = pick(p);
-    if (value !== null) bySecond.set(Math.floor(p.timestamp / 1000), value);
+    if (value !== null) {
+      lastValued = { time, value };
+      bySecond.set(time, lastValued);
+    }
   }
-  return [...bySecond].map(([time, value]) => ({ time: time as UTCTimestamp, value }));
+  return [...bySecond.values()];
 };
 
 const rebuildChart = () => {
@@ -278,13 +309,19 @@ const rebuildChart = () => {
   for (const track of tracks) {
     const data = toPoints(points, track.pick);
     const { tint } = track;
-    track.series.setData(tint === undefined ? data : data.map((d) => ({ ...d, color: tint(d.value) })));
+    track.series.setData(tint === undefined ? data : data.map((d) => ("value" in d ? { ...d, color: tint(d.value) } : d)));
     track.lastTime = data.at(-1)?.time ?? 0;
   }
   chart.timeScale().fitContent();
 };
 
 const pushPoint = (p: HistoryPoint) => {
+  // `p` is already recorded; after a pause longer than staleAfterMs() redraw everything so the gap whitespace is inserted.
+  const prev = history.get(p.symbol)?.at(-2);
+  if (prev !== undefined && p.timestamp - prev.timestamp > staleAfterMs()) {
+    rebuildChart();
+    return;
+  }
   const time = Math.floor(p.timestamp / 1000);
   for (const track of tracks) {
     const value = track.pick(p);
