@@ -85,7 +85,7 @@ The coinalyze.net chart is the reference for both the venue list and the 8h fact
 3. the API's predicted rates for the same venues.
 
 It then reports:
-- **Listing drift:** whether the page still shows exactly the venues in `VENUES`.
+- **Listing drift:** whether the page still shows exactly the venues in `VENUES`, or `unknown` when no sample could read the venue table.
 - **Rate periods:** the median page ÷ API ratio per venue (≈1 for 8h venues, ≈8 for hourly ones).
 - **Tracking:** the mean absolute difference (MAD) between the chart and several candidate series. These are compared live, and against the API's own 1-minute predicted-rate history over the previous 3 hours, to measure how far the chart lags and whether it is smoothed.
 
@@ -127,7 +127,7 @@ Every venue with an API rate lands within 5% of its expected ratio, so the 8h fa
 ```bash
 git clone https://github.com/tarikcaykara/predicted-funding-aggregator.git
 cd predicted-funding-aggregator
-cp .env.example .env    # set AUTH_TOKEN and COINALYZE_API_KEY
+cp .env.example .env    # set AUTH_TOKEN (e.g. openssl rand -hex 32) and COINALYZE_API_KEY
 bun install
 bun run start           # dashboard on http://localhost:3000, WebSocket on /ws
 ```
@@ -141,7 +141,7 @@ Bun loads `.env` automatically, so no `dotenv` package is needed.
 ## Docker / Compose
 
 ```bash
-cp .env.example .env    # set AUTH_TOKEN and COINALYZE_API_KEY
+cp .env.example .env    # set AUTH_TOKEN (e.g. openssl rand -hex 32) and COINALYZE_API_KEY
 docker compose up --build -d
 docker compose ps       # "healthy" after the first check
 ```
@@ -165,7 +165,7 @@ docker compose ps       # "healthy" after the first check
 | `PONG_TIMEOUT_MS` | `65000` | Close a client that hasn't sent a pong within this window |
 | `AUTH_TIMEOUT_MS` | `10000` | Close a client that hasn't authenticated within this window |
 
-Integers must be positive whole numbers. Invalid values stop the process at startup with a clear message.
+Integers must be positive whole numbers. A missing required variable or an invalid value stops the process at startup with a clear message.
 
 ## WebSocket protocol
 
@@ -219,7 +219,7 @@ A `HistoryPoint` is a `Snapshot` without `components`.
 - `aggregated_predicted_funding_rate`, `coin` and `timestamp` keep their names.
 - The value is now this service's API aggregate rather than the number scraped from the chart.
 - Several coins share the `funding-rate` channel, so filter on `symbol`.
-- The first message after auth is `{"type":"history"}`.
+- After the `auth` ok reply, the first message is `{"type":"history"}`.
 - `funding_rate.json` is an array of the latest snapshot per coin.
 - `INTERVAL_MS` keeps its meaning. There is no default `AUTH_TOKEN` anymore.
 

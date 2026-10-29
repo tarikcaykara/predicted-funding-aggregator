@@ -39,7 +39,7 @@ Runtime modes:
 | `src/server.ts` | `createServer`: `Bun.serve` routes + WS protocol. |
 | `src/coinalyze/client.ts` | `CoinalyzeClient`: `api_key` header, ≤20 symbols per request, every attempt goes through the limiter, 429 `Retry-After` (3 attempts, each wait logged as WARN, the rejected call refunded to the limiter), 401 fails immediately; includes 1-minute history for calibration. |
 | `src/coinalyze/rate-limiter.ts` | Sliding window like the server's: 40 calls per 60 s, each call held 60 s + 250 ms margin; `acquire()` returns a refund for rejected requests. |
-| `src/funding/universe.ts` | **`VENUES`**: the ten venues (page label, exchange code, quote, `ratePeriodHours`). The single source of methodology truth, together with `STALE_AFTER_MS`. |
+| `src/funding/universe.ts` | **`VENUES`**: the ten venues (page label, exchange code, quote, `ratePeriodHours`). The single source of methodology truth, together with `STALE_AFTER_MS` (defined in `source.ts`). |
 | `src/funding/aggregate.ts` | `aggregate()` (pure AVG + OI-weighted). |
 | `src/funding/source.ts` | `FundingSource`: resolves venues against `/future-markets` (24h cache), rolling per-market OI refresh (oldest first, refetched once ≥ `OI_REFRESH_MS` old, spare budget per cycle), OI seeded from persisted snapshots, OI-weighted null until every used venue has OI, an OI failure does not block AVG, staleness filter, components, budget warning. Clock injectable. |
 | `scripts/calibrate/*` | `main.ts` (CLI), `analyze.ts` (pure: venue ratios, lag-aligned MAD, history SMA), `chart-page.ts`, `browser.ts`, `parse.ts`. |
@@ -56,7 +56,7 @@ Bun auto-loads `.env`. Do NOT use `dotenv`. All parsing happens in `src/config.t
 | Variable | Default | Notes |
 |---|---|---|
 | `PORT` | `3000` | |
-| `AUTH_TOKEN` | none | Required. There is no default token. |
+| `AUTH_TOKEN` | none | Required. There is no default token, and `.env.example` leaves it empty on purpose: a copied file stops at startup until a token is set. |
 | `COINALYZE_API_KEY` | none | Always required |
 | `COINS` | `BTC,ETH,SOL` | Must be keys of `COIN_REGISTRY` |
 | `INTERVAL_MS` | `60000` | 3 coins × 10 venues at 60 s ≈ 33 of 40 calls/min |
@@ -79,7 +79,7 @@ Bun auto-loads `.env`. Do NOT use `dotenv`. All parsing happens in `src/config.t
 
 1. **`VENUES` mirrors the site, not the API.**
    - The API lists many more stablecoin perpetuals: Polymarket contracts, ETHBTC/ETHU/USD1 quotes, Lighter, dYdX, and a Coinbase feed that returned a 12-day-old value. Do not widen the venue list to "all STABLE perps".
-   - `bun run calibrate` reports listing drift when the page changes.
+   - `bun run calibrate` reports listing drift when the page changes, and `unknown` when no sample could read the venue table.
 2. **Rate periods are measured.** Hyperliquid (`H`) and Kraken (`K`) report hourly rates (page ÷ API ≈ 8). Deribit, Huobi and OKX have no predicted rate in the API: they are omitted from the response rather than returned as `null`, and show as `no_rate`. Re-run the calibration if Coinalyze changes units.
 3. **API budget: 40 calls/min per key, 1 call per symbol, counted over a sliding 60 s window.** Do not run the calibration tool and the service with the same key at the same time; together they exceed the budget and both get 429s. Two consecutive 30+-call cycles never fit in one window, so each cycle's first request waits for the previous cycle's first request to leave it: polls settle at about `INTERVAL_MS` + 250 ms, and that wait is by design (a 429 is not). Cold start costs only predicted rates plus spare-budget OI, so the first publish arrives in seconds; OI-weighted stays null for ~3–4 cycles unless seeded from `DATA_FILE`.
 4. **API keys activate 2 minutes after generation**, and generating a new key deactivates the old one immediately. A fresh key returning 401 is expected for those 2 minutes.
@@ -121,6 +121,8 @@ v3.1 (PR #22, squash-merged as `9b980be` and tagged `v3.1.0`): the dashboard imp
 v3.2 (PR #24, squash-merged as `282841f` and tagged `v3.2.0`): the dashboard implements the Claude Design "Number Line" direction. `web/` takes the export's markup (Google Fonts links dropped, local stylesheet and script, a `#history-window` span) and its stylesheet minus the states board, plus self-hosted JetBrains Mono and Space Grotesk. `app.ts` keeps the WebSocket, history and reconnect logic and renders the `#app[data-conn]`/`[data-data]` states, venues as dots on a shared rate axis (area ∝ OI weight) and a spread histogram pane. The default coin is BTC. Ledger is archived at `v3.1.0` (restore command in the README); both exports live in `design/handoff/number-line/` and `design/handoff/ledger/`.
 
 v3.2.1 (PR #26, tagged `v3.2.1`): the dashboard chart's time axis shows the date where the day changes (the crosshair label too), and a pause longer than three poll intervals leaves a gap instead of a joined line, as the README already described. The README screenshot was retaken from a continuous run.
+
+v3.2.2 (PRs #27 and #28, tagged `v3.2.2`): `.env.example` leaves `AUTH_TOKEN` empty, so a copied file stops at startup instead of running with the known `change-me` token. The calibration report prints `Listing: unknown` when no sample read the venue table, where it used to claim an exact match. #28 updated `@types/bun` and Playwright and moved `brace-expansion` to 1.1.21, which clears the high advisories in the stealth plugin's dev-only dependency tree.
 
 Headed mode, a separate server file, the live chart source, the `--once` mode (`bun run once`, removed in v3.0), `SOURCES`/`API_INTERVAL_MS`/`CHART_INTERVAL_MS` and "all STABLE perps" scope are historical.
 

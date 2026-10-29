@@ -1,5 +1,21 @@
 import { expect, test } from "bun:test";
-import { bestLag, historyFit, minuteAverage } from "../scripts/calibrate/analyze.ts";
+import { analyzeCoin, bestLag, historyFit, minuteAverage, type Sample } from "../scripts/calibrate/analyze.ts";
+import type { PageVenue } from "../scripts/calibrate/chart-page.ts";
+import { VENUES } from "../src/funding/universe.ts";
+
+const pageSample = (page: PageVenue[]): Sample => ({ at: 0, coins: { BTC: { chart: null, page, api: null } } });
+
+test("analyzeCoin reports the listing as unknown when no sample read the venue table", () => {
+  expect(analyzeCoin([pageSample([]), pageSample([])], "BTC", 0, null).listing).toBeNull();
+});
+
+test("analyzeCoin takes listing drift from the samples that read the venue table", () => {
+  const page = [...VENUES.slice(1).map((v) => v.label), "LIGHTER"].map((label) => ({ label, current: null, predicted: null }));
+  expect(analyzeCoin([pageSample([]), pageSample(page)], "BTC", 0, null).listing).toEqual({
+    missingOnPage: [VENUES[0]!.label],
+    extraOnPage: ["LIGHTER"],
+  });
+});
 
 test("bestLag finds how many samples the reference trails the series", () => {
   const series = [1, 2, 3, 4, 5, 6, 7, 8];
