@@ -122,6 +122,8 @@ v3.2 (PR #24, squash-merged as `282841f` and tagged `v3.2.0`): the dashboard imp
 
 v3.2.1 (PR #26, tagged `v3.2.1`): the dashboard chart's time axis shows the date where the day changes (the crosshair label too), and a pause longer than three poll intervals leaves a gap instead of a joined line, as the README already described. The README screenshot was retaken from a continuous run.
 
+v3.2.2 (PRs #27 and #28, tagged `v3.2.2`): `.env.example` leaves `AUTH_TOKEN` empty, so a copied file stops at startup instead of running with the known `change-me` token. The calibration report prints `Listing: unknown` when no sample read the venue table, where it used to claim an exact match. #28 updated `@types/bun` and Playwright and moved `brace-expansion` to 1.1.21, which clears the high advisories in the stealth plugin's dev-only dependency tree.
+
 Headed mode, a separate server file, the live chart source, the `--once` mode (`bun run once`, removed in v3.0), `SOURCES`/`API_INTERVAL_MS`/`CHART_INTERVAL_MS` and "all STABLE perps" scope are historical.
 
 ## Working conventions for this repo
