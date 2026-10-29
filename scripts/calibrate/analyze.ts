@@ -42,8 +42,8 @@ export interface CoinReport {
   coin: CoinSymbol;
   samples: number;
   meanChart: number | null;
-  missingOnPage: string[];
-  extraOnPage: string[];
+  /** null when no sample read the page's venue table, so drift is unknown. */
+  listing: { missingOnPage: string[]; extraOnPage: string[] } | null;
   venues: VenueCheck[];
   live: { name: string; fit: SeriesFit }[];
   history: { name: string; fit: SeriesFit }[];
@@ -189,8 +189,13 @@ export const analyzeCoin = (
     coin,
     samples: rows.filter((r) => r !== undefined).length,
     meanChart: chartValues.length > 0 ? mean(chartValues) : null,
-    missingOnPage: pageLabels.size === 0 ? [] : [...venueLabels].filter((l) => !pageLabels.has(l)),
-    extraOnPage: [...pageLabels].filter((l) => !venueLabels.has(l)),
+    listing:
+      pageLabels.size === 0
+        ? null
+        : {
+            missingOnPage: [...venueLabels].filter((l) => !pageLabels.has(l)),
+            extraOnPage: [...pageLabels].filter((l) => !venueLabels.has(l)),
+          },
     venues,
     live: [
       {
@@ -240,9 +245,11 @@ export const formatReport = (reports: CoinReport[], samples: Sample[], gapMs: nu
   for (const r of reports) {
     lines.push(``, `## ${r.coin}`, ``);
     lines.push(
-      r.missingOnPage.length === 0 && r.extraOnPage.length === 0
-        ? `Listing: the page shows exactly the ${VENUES.length} venues in VENUES.`
-        : `Listing drift: missing on page [${r.missingOnPage.join(", ")}], not in VENUES [${r.extraOnPage.join(", ")}].`,
+      r.listing === null
+        ? `Listing: unknown, no sample read the venue table.`
+        : r.listing.missingOnPage.length === 0 && r.listing.extraOnPage.length === 0
+          ? `Listing: the page shows exactly the ${VENUES.length} venues in VENUES.`
+          : `Listing drift: missing on page [${r.listing.missingOnPage.join(", ")}], not in VENUES [${r.listing.extraOnPage.join(", ")}].`,
       ``,
       `| Venue | Expected page ÷ API | Median page ÷ API | n | Check |`,
       `|---|---|---|---|---|`,
