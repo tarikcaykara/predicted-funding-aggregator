@@ -7,7 +7,8 @@ import { CHANNEL, CLOSE, type ServerMessage } from "./protocol.ts";
 import type { SnapshotStore } from "./store.ts";
 
 const log = createLogger("server");
-const MAX_CLIENT_MESSAGE_BYTES = 16 * 1024; // client messages are ~100 bytes; Bun closes larger frames with 1009
+// Client messages are ~100 bytes. Bun closes on larger frames: a 1009 close frame on macOS, none on Linux (1006).
+const MAX_CLIENT_MESSAGE_BYTES = 16 * 1024;
 
 interface ClientData {
   authenticated: boolean;

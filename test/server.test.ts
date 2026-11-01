@@ -85,11 +85,21 @@ test("a client that never authenticates is closed with 4003", async () => {
   expect((await client.closed).code).toBe(4003);
 });
 
-test("a message over 16 KiB is closed with 1009", async () => {
-  const client = connect();
-  await client.opened;
-  client.ws.send("x".repeat(64 * 1024));
-  expect((await client.closed).code).toBe(1009);
+test("a message of 16 KiB is parsed; one byte more closes the connection unparsed", async () => {
+  const atCap = connect();
+  await atCap.opened;
+  atCap.ws.send("x".repeat(16 * 1024));
+  expect(await atCap.next()).toEqual({ type: "error", message: "invalid json" });
+  atCap.ws.close();
+  await atCap.closed;
+
+  const overCap = connect();
+  await overCap.opened;
+  overCap.ws.send("x".repeat(16 * 1024 + 1));
+  // Bun sends a 1009 close frame on macOS but drops the connection without one on Linux (1006).
+  expect([1006, 1009]).toContain((await overCap.closed).code);
+  // An already-queued reply would win the race; none means the frame was never parsed.
+  expect(await Promise.race([overCap.next(), Promise.resolve("no reply")])).toBe("no reply");
 });
 
 test("/health returns the computed status code and body", async () => {

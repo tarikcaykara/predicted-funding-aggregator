@@ -224,7 +224,7 @@ A `HistoryPoint` is a `Snapshot` without `components`.
 | `4001` | invalid token (the server sends `{"type":"auth","status":"error","message":"invalid token"}` first) |
 | `4002` | pong timeout |
 | `4003` | no auth message within `AUTH_TIMEOUT_MS` |
-| `1009` | a client message larger than 16 KiB |
+| `1009` | a client message larger than 16 KiB, sent unparsed. On Linux (including the Docker image) Bun drops the connection without a close frame, so clients see `1006` |
 
 **Migrating from v1:**
 - `aggregated_predicted_funding_rate`, `coin` and `timestamp` keep their names.

@@ -74,7 +74,7 @@ Bun auto-loads `.env`. Do NOT use `dotenv`. All parsing happens in `src/config.t
 - The client sends `{"type":"auth","token"}` within `AUTH_TIMEOUT_MS`. The server replies `{"type":"auth","status":"ok",coins,interval_ms}` and then `{"type":"history",points,latest}`.
 - After that, each `Snapshot` (with `components`) is published on the `"funding-rate"` channel. Consumers filter by `symbol`.
 - Keepalive: server `{"type":"ping"}` → client `{"type":"pong"}`.
-- Close codes: `4001` invalid token, `4002` pong timeout, `4003` auth timeout. Client messages over 16 KiB are closed with 1009.
+- Close codes: `4001` invalid token, `4002` pong timeout, `4003` auth timeout. A client message over 16 KiB closes the connection unparsed: Bun sends 1009 on macOS but drops the socket without a close frame on Linux, where clients see 1006.
 - `Snapshot` keeps the v1 fields `aggregated_predicted_funding_rate`, `coin` (slug) and `timestamp`. Changing those names breaks v1 consumers.
 
 ## Non-obvious gotchas (read before changing methodology or the calibration tool)
