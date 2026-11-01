@@ -146,9 +146,17 @@ docker compose up --build -d
 docker compose ps       # "healthy" after the first check
 ```
 
-- **Image:** about 240 MB. Based on the pinned `oven/bun:1.4.3-debian`, runs as the non-root `bun` user, with a `HEALTHCHECK` on `/health`.
-- **Persistence:** compose stores `funding_rate.json` and `history.sqlite` in the named volume `data` (`DATA_FILE=/app/data/funding_rate.json`, `HISTORY_FILE=/app/data/history.sqlite`), so the latest snapshots and the chart history survive container re-creation.
+- **Image:** about 240 MB. Based on the pinned `oven/bun:1.4.3-debian`, runs as the non-root `bun` user, which can write only `/app/data` (the application code is root-owned), with a `HEALTHCHECK` on `/health`.
+- **Persistence:** the image sets `DATA_FILE=/app/data/funding_rate.json` and `HISTORY_FILE=/app/data/history.sqlite`; compose sets the same paths (they override the `./` paths in a copied `.env`) and mounts the named volume `data` there, so the latest snapshots and the chart history survive container re-creation.
 - **Shutdown:** SIGTERM triggers a graceful shutdown.
+
+## Deployment security
+
+- The dashboard and `/ws` are plain HTTP. On `ws://` the token crosses the network in clear text.
+- Compose publishes the port on every interface. Beyond localhost or a trusted network, put the service behind a TLS reverse proxy (the dashboard then switches to `wss://` automatically) and restrict the port with a firewall.
+- `AUTH_TOKEN` must be at least 32 characters; generate it with `openssl rand -hex 32`.
+- Client messages over 16 KiB are rejected. Connection limits and rate limiting belong to the proxy.
+- `bun run start` serves the production bundle; `NODE_ENV=development` enables Bun's dev server and is for local development only.
 
 ## Configuration
 
