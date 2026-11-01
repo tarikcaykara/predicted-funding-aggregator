@@ -127,6 +127,20 @@ v3.2.1 (PR #26, tagged `v3.2.1`): the dashboard chart's time axis shows the date
 
 v3.2.2 (PRs #27 and #28, tagged `v3.2.2`): `.env.example` leaves `AUTH_TOKEN` empty, so a copied file stops at startup instead of running with the known `change-me` token. The calibration report prints `Listing: unknown` when no sample read the venue table, where it used to claim an exact match. #28 updated `@types/bun` and Playwright and moved `brace-expansion` to 1.1.21, which clears the high advisories in the stealth plugin's dev-only dependency tree.
 
+v4.0 (tagged `v4.0.0` on `240afa1`, the #31 squash commit):
+- **PR #29 (`90a1810`):** fixes from an end-to-end audit of v3.2.2.
+  - Config: `AUTH_TOKEN` ≥ 32 characters, numeric bounds, `PONG_TIMEOUT_MS` > `PING_INTERVAL_MS`, `COINALYZE_BASE_URL`, and Bun's dev server only with `NODE_ENV=development`.
+  - Server: client messages capped at 16 KiB.
+  - Store: components validated on load, subscribers notified before persisting, atomic `DATA_FILE`.
+  - Funding: future-dated OI seeds ignored.
+  - Dashboard: bounded live chart, keyboard coin tabs, data-state announcements, reduced motion, token input without `name`.
+  - Image and CI: root-owned code with only `/app/data` writable; CI with `contents: read` and no persisted credentials.
+  - Tests: `test/e2e.test.ts` (process-level, against `test/fake-coinalyze.ts`) and the test-first rule.
+  - Breaking: those config checks stop startup with exit 1, and a bare-metal `bun run start` serves the production bundle.
+  - The PR lists the findings deliberately left unfixed, and the compose `environment:` block kept against the plan.
+- **PR #30 (`720b58a`):** Dependabot version updates (`bun`, `github-actions`; weekly, 7-day cooldown), actions pinned to commit SHAs, Dependabot alerts and security updates enabled. GitHub's dependency graph does not read `bun.lock`, so `bun audit` stays the transitive check. Dependabot's first run started about 13 minutes after the merge.
+- **PR #31 (`240afa1`):** Dependabot's first PR, `actions/checkout` 4.4.0 → 7.0.1.
+
 Headed mode, a separate server file, the live chart source, the `--once` mode (`bun run once`, removed in v3.0), `SOURCES`/`API_INTERVAL_MS`/`CHART_INTERVAL_MS` and "all STABLE perps" scope are historical.
 
 ## Working conventions for this repo
