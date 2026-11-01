@@ -162,7 +162,7 @@ const seedSnapshot = (timestamp: number): Snapshot => ({
   })),
 });
 
-test("seeded open interest gives OI-weighted on the first poll; seeds older than OI_SEED_MAX_AGE_MS are ignored", async () => {
+test("seeded open interest gives OI-weighted on the first poll; seeds older than OI_SEED_MAX_AGE_MS or dated in the future are ignored", async () => {
   const clock = { now: T0 };
   const { client, calls } = fakeClient(clock);
   const seeded = new FundingSource({ client, coins: ["ETH"], intervalMs: 60000, now: () => clock.now, openInterestPerCycle: 0 });
@@ -175,6 +175,11 @@ test("seeded open interest gives OI-weighted on the first poll; seeds older than
   old.seedOpenInterest([seedSnapshot(T0 - OI_SEED_MAX_AGE_MS - 1)]);
   const [ethOld] = await old.poll();
   expect(ethOld!.oi_weighted_predicted_funding_rate).toBeNull();
+
+  const future = new FundingSource({ client, coins: ["ETH"], intervalMs: 60000, now: () => clock.now, openInterestPerCycle: 0 });
+  future.seedOpenInterest([seedSnapshot(T0 + 60_000)]);
+  const [ethFuture] = await future.poll();
+  expect(ethFuture!.oi_weighted_predicted_funding_rate).toBeNull();
 });
 
 test("throws when no coin has a fresh rate", async () => {
