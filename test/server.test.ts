@@ -6,6 +6,7 @@ import type { Health } from "../src/health.ts";
 import { createServer } from "../src/server.ts";
 import { SnapshotStore } from "../src/store.ts";
 import type { Snapshot } from "../src/types.ts";
+import { connectWs } from "./ws-client.ts";
 
 const dir = await mkdtemp(join(tmpdir(), "coinalyze-server-"));
 const store = new SnapshotStore({ file: join(dir, "funding_rate.json"), historyFile: join(dir, "history.sqlite"), historyLimit: 10 });
@@ -48,32 +49,7 @@ afterAll(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-const connect = () => {
-  const ws = new WebSocket(`ws://127.0.0.1:${server.port}/ws`);
-  const queue: unknown[] = [];
-  let waiting: ((msg: unknown) => void) | null = null;
-  const opened = Promise.withResolvers<void>();
-  const closed = Promise.withResolvers<CloseEvent>();
-  ws.onopen = () => opened.resolve();
-  ws.onclose = (e) => closed.resolve(e);
-  ws.onmessage = (e) => {
-    const msg = JSON.parse(String(e.data));
-    if (waiting) {
-      const resolve = waiting;
-      waiting = null;
-      resolve(msg);
-    } else {
-      queue.push(msg);
-    }
-  };
-  const next = (): Promise<unknown> => {
-    if (queue.length > 0) return Promise.resolve(queue.shift());
-    const { promise, resolve } = Promise.withResolvers<unknown>();
-    waiting = resolve;
-    return promise;
-  };
-  return { ws, opened: opened.promise, closed: closed.promise, next };
-};
+const connect = () => connectWs(`ws://127.0.0.1:${server.port}/ws`);
 
 test("valid auth receives metadata, history with the latest breakdown, then live snapshots", async () => {
   const client = connect();

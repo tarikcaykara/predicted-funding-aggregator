@@ -6,6 +6,7 @@ export class ConfigError extends Error {
 
 export interface Config {
   coinalyzeApiKey: string;
+  coinalyzeBaseUrl: string | undefined;
   coins: CoinSymbol[];
   intervalMs: number;
   dataFile: string;
@@ -35,6 +36,16 @@ const required = (env: Env, name: string): string => {
   return value;
 };
 
+/** Optional override for tests and proxies; `undefined` keeps CoinalyzeClient's default. */
+const baseUrl = (env: Env): string | undefined => {
+  const raw = env.COINALYZE_BASE_URL?.trim();
+  if (!raw) return undefined;
+  if (!URL.canParse(raw) || !["http:", "https:"].includes(new URL(raw).protocol)) {
+    throw new ConfigError(`Invalid COINALYZE_BASE_URL: "${raw}"`);
+  }
+  return raw.replace(/\/+$/, "");
+};
+
 // "".split(",") yields [""], so an empty list fails the membership check below.
 const parseCoins = (raw: string): CoinSymbol[] => {
   const coins: CoinSymbol[] = [];
@@ -50,6 +61,7 @@ const parseCoins = (raw: string): CoinSymbol[] => {
 
 export const loadConfig = (env: Env): Config => ({
   coinalyzeApiKey: required(env, "COINALYZE_API_KEY"),
+  coinalyzeBaseUrl: baseUrl(env),
   coins: parseCoins(env.COINS ?? "BTC,ETH,SOL"),
   intervalMs: positiveInt(env, "INTERVAL_MS", 60000),
   dataFile: env.DATA_FILE?.trim() || "./funding_rate.json",

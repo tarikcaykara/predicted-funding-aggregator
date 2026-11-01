@@ -157,6 +157,7 @@ docker compose ps       # "healthy" after the first check
 | `PORT` | `3000` | HTTP + WebSocket port |
 | `AUTH_TOKEN` | *(required)* | Token WebSocket clients must send; there is no default |
 | `COINALYZE_API_KEY` | *(required)* | Coinalyze API key |
+| `COINALYZE_BASE_URL` | `https://api.coinalyze.net/v1` | Coinalyze API base URL. For the e2e test's fake server or a proxy; http(s) only |
 | `COINS` | `BTC,ETH,SOL` | Comma-separated subset of `BTC`, `ETH`, `SOL` |
 | `INTERVAL_MS` | `60000` | Poll interval. 3 coins at 60 s ≈ 33 of the 40 calls/min |
 | `DATA_FILE` | `./funding_rate.json` | Where the latest snapshots are persisted |
@@ -234,7 +235,7 @@ Returns `200` with `"status":"ok"` while the last successful poll is within 3 in
 ## Development
 
 ```bash
-bun test            # unit + protocol tests; no network, no browser
+bun test            # unit, integration and e2e tests; loopback only, no external network, no browser
 bun run typecheck   # tsc --noEmit (strict)
 ```
 
@@ -258,7 +259,7 @@ src/
 web/                         dashboard (Bun HTML import + lightweight-charts, JetBrains Mono + Space Grotesk fonts)
 design/handoff/              design exports: number-line/ (current), ledger/ (v3.1, archived); not shipped in the image
 scripts/calibrate/           offline calibration (Playwright; dev dependency)
-test/                        bun:test suites
+test/                        bun:test suites; e2e.test.ts runs src/main.ts against fake-coinalyze.ts
 ```
 
 ## Design notes: v1 → v2
