@@ -200,6 +200,10 @@ test(
     expect(await coins.proc.exited).toBe(1);
     expect(await coins.stderr).toContain('Invalid COINS entry "DOGE"');
 
+    const token = start(dir, serviceEnv(dir, { AUTH_TOKEN: "short" }));
+    expect(await token.proc.exited).toBe(1);
+    expect(await token.stderr).toContain("AUTH_TOKEN must be at least 32 characters");
+
     const historyFile = start(dir, serviceEnv(dir, { HISTORY_FILE: dir }));
     expect(await historyFile.proc.exited).toBe(1);
     expect(await historyFile.stderr).toContain("cannot open HISTORY_FILE");

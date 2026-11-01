@@ -154,8 +154,8 @@ docker compose ps       # "healthy" after the first check
 
 | Variable | Default | Description |
 |---|---|---|
-| `PORT` | `3000` | HTTP + WebSocket port |
-| `AUTH_TOKEN` | *(required)* | Token WebSocket clients must send; there is no default |
+| `PORT` | `3000` | HTTP + WebSocket port (1–65535) |
+| `AUTH_TOKEN` | *(required)* | Token WebSocket clients must send, at least 32 characters (e.g. `openssl rand -hex 32`); there is no default |
 | `COINALYZE_API_KEY` | *(required)* | Coinalyze API key |
 | `COINALYZE_BASE_URL` | `https://api.coinalyze.net/v1` | Coinalyze API base URL. For the e2e test's fake server or a proxy; http(s) only |
 | `COINS` | `BTC,ETH,SOL` | Comma-separated subset of `BTC`, `ETH`, `SOL` |
@@ -163,10 +163,10 @@ docker compose ps       # "healthy" after the first check
 | `DATA_FILE` | `./funding_rate.json` | Where the latest snapshots are persisted |
 | `HISTORY_FILE` | `./history.sqlite` | SQLite file for the chart history (720 points per coin). The service exits 1 at startup if it cannot be opened |
 | `PING_INTERVAL_MS` | `30000` | WebSocket ping interval |
-| `PONG_TIMEOUT_MS` | `65000` | Close a client that hasn't sent a pong within this window |
+| `PONG_TIMEOUT_MS` | `65000` | Close a client that hasn't sent a pong within this window; must be greater than `PING_INTERVAL_MS` |
 | `AUTH_TIMEOUT_MS` | `10000` | Close a client that hasn't authenticated within this window |
 
-Integers must be positive whole numbers. A missing required variable or an invalid value stops the process at startup with a clear message.
+Integers must be positive whole numbers; timers are at most 2147483647 ms and `PORT` at most 65535. A missing required variable or an invalid value stops the process at startup with a clear message.
 
 ## WebSocket protocol
 

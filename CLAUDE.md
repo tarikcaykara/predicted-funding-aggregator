@@ -55,8 +55,8 @@ Bun auto-loads `.env`. Do NOT use `dotenv`. All parsing happens in `src/config.t
 
 | Variable | Default | Notes |
 |---|---|---|
-| `PORT` | `3000` | |
-| `AUTH_TOKEN` | none | Required. There is no default token, and `.env.example` leaves it empty on purpose: a copied file stops at startup until a token is set. |
+| `PORT` | `3000` | 1–65535 |
+| `AUTH_TOKEN` | none | Required. At least 32 characters. There is no default token, and `.env.example` leaves it empty on purpose: a copied file stops at startup until a token is set. |
 | `COINALYZE_API_KEY` | none | Always required |
 | `COINALYZE_BASE_URL` | `https://api.coinalyze.net/v1` | Coinalyze API base URL. For the e2e test's fake server or a proxy; http(s) only |
 | `COINS` | `BTC,ETH,SOL` | Must be keys of `COIN_REGISTRY` |
@@ -64,7 +64,7 @@ Bun auto-loads `.env`. Do NOT use `dotenv`. All parsing happens in `src/config.t
 | `DATA_FILE` | `./funding_rate.json` | Compose sets `/app/data/funding_rate.json` on a named volume |
 | `HISTORY_FILE` | `./history.sqlite` | Chart history DB; compose sets `/app/data/history.sqlite` on the same volume |
 | `PING_INTERVAL_MS` | `30000` | |
-| `PONG_TIMEOUT_MS` | `65000` | |
+| `PONG_TIMEOUT_MS` | `65000` | Must be greater than `PING_INTERVAL_MS` |
 | `AUTH_TIMEOUT_MS` | `10000` | |
 
 ## WebSocket contract

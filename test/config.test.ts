@@ -34,4 +34,32 @@ describe("loadConfig", () => {
   test.each(["not a url", "ftp://x/v1"])("rejects COINALYZE_BASE_URL=%p", (raw) => {
     expect(() => loadConfig({ ...base, COINALYZE_BASE_URL: raw })).toThrow(`Invalid COINALYZE_BASE_URL: "${raw}"`);
   });
+
+  test("rejects an AUTH_TOKEN shorter than 32 characters", () => {
+    expect(() => loadConfig({ ...base, AUTH_TOKEN: "s".repeat(31) })).toThrow("AUTH_TOKEN must be at least 32 characters");
+  });
+
+  test.each([
+    ["PORT", "65536"],
+    ["INTERVAL_MS", "2147483648"],
+    ["PING_INTERVAL_MS", "2147483648"],
+    ["PONG_TIMEOUT_MS", "2147483648"],
+    ["AUTH_TIMEOUT_MS", "2147483648"],
+  ])("rejects %s=%p above its maximum", (name, raw) => {
+    expect(() => loadConfig({ ...base, [name]: raw })).toThrow(`Invalid ${name}: "${raw}"`);
+  });
+
+  test("accepts the maxima", () => {
+    expect(loadConfig({ ...base, PORT: "65535" }).port).toBe(65535);
+    expect(loadConfig({ ...base, PING_INTERVAL_MS: "2147483646", PONG_TIMEOUT_MS: "2147483647" })).toMatchObject({
+      pingIntervalMs: 2147483646,
+      pongTimeoutMs: 2147483647,
+    });
+  });
+
+  test("PONG_TIMEOUT_MS must exceed PING_INTERVAL_MS", () => {
+    expect(() => loadConfig({ ...base, PING_INTERVAL_MS: "30000", PONG_TIMEOUT_MS: "30000" })).toThrow(
+      "PONG_TIMEOUT_MS (30000) must be greater than PING_INTERVAL_MS (30000)",
+    );
+  });
 });
