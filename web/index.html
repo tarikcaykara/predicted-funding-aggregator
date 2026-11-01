@@ -22,7 +22,7 @@
       <label class="label" for="token">Access token</label>
       <div class="auth__row">
         <div class="field">
-          <input class="field__input" id="token" name="token" type="password" placeholder="AUTH_TOKEN" autocomplete="off" spellcheck="false">
+          <input class="field__input" id="token" type="password" placeholder="AUTH_TOKEN" autocomplete="off" spellcheck="false">
           <button class="field__toggle" id="toggle" type="button" aria-controls="token" aria-pressed="false">Show</button>
         </div>
         <button class="btn" id="connect" type="submit">Connect</button>
@@ -47,6 +47,7 @@
   </aside>
 
   <main class="main">
+    <p class="sr-only" id="data-announce" role="status" aria-live="polite"></p>
     <section class="metrics" aria-label="Headline values">
       <div class="metric">
         <div class="metric__head"><span class="swatch swatch--avg"></span><span>AVG · <span data-coin-label>BTC</span></span><span class="chip-stale">STALE</span></div>
