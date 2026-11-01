@@ -38,6 +38,7 @@ const server = createServer({
   authTimeoutMs: 200,
   pingIntervalMs: 60000,
   pongTimeoutMs: 120000,
+  development: false,
   store,
   getHealth: () => health,
   meta: { coins: ["ETH"], intervalMs: 60000 },
@@ -82,6 +83,13 @@ test("a client that never authenticates is closed with 4003", async () => {
   const client = connect();
   await client.opened;
   expect((await client.closed).code).toBe(4003);
+});
+
+test("a message over 16 KiB is closed with 1009", async () => {
+  const client = connect();
+  await client.opened;
+  client.ws.send("x".repeat(64 * 1024));
+  expect((await client.closed).code).toBe(1009);
 });
 
 test("/health returns the computed status code and body", async () => {

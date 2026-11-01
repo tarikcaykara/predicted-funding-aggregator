@@ -165,6 +165,7 @@ docker compose ps       # "healthy" after the first check
 | `PING_INTERVAL_MS` | `30000` | WebSocket ping interval |
 | `PONG_TIMEOUT_MS` | `65000` | Close a client that hasn't sent a pong within this window; must be greater than `PING_INTERVAL_MS` |
 | `AUTH_TIMEOUT_MS` | `10000` | Close a client that hasn't authenticated within this window |
+| `NODE_ENV` | *(unset)* | `development` serves the dashboard through Bun's dev server (HMR, error overlay); any other value serves the production bundle. The Docker image sets `production` |
 
 Integers must be positive whole numbers; timers are at most 2147483647 ms and `PORT` at most 65535. A missing required variable or an invalid value stops the process at startup with a clear message.
 
@@ -215,6 +216,7 @@ A `HistoryPoint` is a `Snapshot` without `components`.
 | `4001` | invalid token (the server sends `{"type":"auth","status":"error","message":"invalid token"}` first) |
 | `4002` | pong timeout |
 | `4003` | no auth message within `AUTH_TIMEOUT_MS` |
+| `1009` | a client message larger than 16 KiB |
 
 **Migrating from v1:**
 - `aggregated_predicted_funding_rate`, `coin` and `timestamp` keep their names.

@@ -45,6 +45,7 @@ const server = createServer({
   authTimeoutMs: config.authTimeoutMs,
   pingIntervalMs: config.pingIntervalMs,
   pongTimeoutMs: config.pongTimeoutMs,
+  development: config.development,
   store,
   getHealth: () => computeHealth(status, Date.now(), startedAt),
   meta: { coins: config.coins, intervalMs: config.intervalMs },

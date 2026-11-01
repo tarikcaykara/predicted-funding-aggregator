@@ -36,7 +36,7 @@ Runtime modes:
 | `src/store.ts` | `SnapshotStore`: latest per coin (persisted to `DATA_FILE`), history of `HistoryPoint`s (persisted to `HISTORY_FILE` via `bun:sqlite`, one transaction per `add`, pruned to `historyLimit` per coin; `load()` seeds history from the DB only, never from the JSON), subscribers. The constructor opens the DB and throws on a bad file; `main.ts` exits 1. |
 | `src/loop.ts` | `runSourceLoop`: drift-free (start-to-start), first poll immediate, never throws/exits; `abortableSleep`. |
 | `src/health.ts` | `computeHealth` (pure): ok if a poll succeeded within 3 intervals (or startup grace), else 503. |
-| `src/server.ts` | `createServer`: `Bun.serve` routes + WS protocol. |
+| `src/server.ts` | `createServer`: `Bun.serve` routes + WS protocol; client messages capped at 16 KiB; dev server only when `development` (from `NODE_ENV=development`). |
 | `src/coinalyze/client.ts` | `CoinalyzeClient`: `api_key` header, ≤20 symbols per request, every attempt goes through the limiter, 429 `Retry-After` (3 attempts, each wait logged as WARN, the rejected call refunded to the limiter), 401 fails immediately; includes 1-minute history for calibration. |
 | `src/coinalyze/rate-limiter.ts` | Sliding window like the server's: 40 calls per 60 s, each call held 60 s + 250 ms margin; `acquire()` returns a refund for rejected requests. |
 | `src/funding/universe.ts` | **`VENUES`**: the ten venues (page label, exchange code, quote, `ratePeriodHours`). The single source of methodology truth, together with `STALE_AFTER_MS` (defined in `source.ts`). |
@@ -66,6 +66,7 @@ Bun auto-loads `.env`. Do NOT use `dotenv`. All parsing happens in `src/config.t
 | `PING_INTERVAL_MS` | `30000` | |
 | `PONG_TIMEOUT_MS` | `65000` | Must be greater than `PING_INTERVAL_MS` |
 | `AUTH_TIMEOUT_MS` | `10000` | |
+| `NODE_ENV` | unset | `development` serves the dashboard through Bun's dev server (HMR, error overlay); any other value serves the production bundle. The Docker image sets `production` |
 
 ## WebSocket contract
 
@@ -73,7 +74,7 @@ Bun auto-loads `.env`. Do NOT use `dotenv`. All parsing happens in `src/config.t
 - The client sends `{"type":"auth","token"}` within `AUTH_TIMEOUT_MS`. The server replies `{"type":"auth","status":"ok",coins,interval_ms}` and then `{"type":"history",points,latest}`.
 - After that, each `Snapshot` (with `components`) is published on the `"funding-rate"` channel. Consumers filter by `symbol`.
 - Keepalive: server `{"type":"ping"}` → client `{"type":"pong"}`.
-- Close codes: `4001` invalid token, `4002` pong timeout, `4003` auth timeout.
+- Close codes: `4001` invalid token, `4002` pong timeout, `4003` auth timeout. Client messages over 16 KiB are closed with 1009.
 - `Snapshot` keeps the v1 fields `aggregated_predicted_funding_rate`, `coin` (slug) and `timestamp`. Changing those names breaks v1 consumers.
 
 ## Non-obvious gotchas (read before changing methodology or the calibration tool)

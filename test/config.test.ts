@@ -62,4 +62,10 @@ describe("loadConfig", () => {
       "PONG_TIMEOUT_MS (30000) must be greater than PING_INTERVAL_MS (30000)",
     );
   });
+
+  test("NODE_ENV=development enables Bun's dev server; anything else serves the production bundle", () => {
+    expect(loadConfig(base).development).toBe(false);
+    expect(loadConfig({ ...base, NODE_ENV: "production" }).development).toBe(false);
+    expect(loadConfig({ ...base, NODE_ENV: "development" }).development).toBe(true);
+  });
 });

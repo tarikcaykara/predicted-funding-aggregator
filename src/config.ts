@@ -16,6 +16,7 @@ export interface Config {
   pingIntervalMs: number;
   pongTimeoutMs: number;
   authTimeoutMs: number;
+  development: boolean;
 }
 
 type Env = Record<string, string | undefined>;
@@ -85,6 +86,7 @@ export const loadConfig = (env: Env): Config => {
     pingIntervalMs: positiveInt(env, "PING_INTERVAL_MS", 30000),
     pongTimeoutMs: positiveInt(env, "PONG_TIMEOUT_MS", 65000),
     authTimeoutMs: positiveInt(env, "AUTH_TIMEOUT_MS", 10000),
+    development: env.NODE_ENV === "development",
   };
   if (config.pongTimeoutMs <= config.pingIntervalMs) {
     throw new ConfigError(
