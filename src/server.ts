@@ -7,6 +7,8 @@ import { CHANNEL, CLOSE, type ServerMessage } from "./protocol.ts";
 import type { SnapshotStore } from "./store.ts";
 
 const log = createLogger("server");
+// Client messages are ~100 bytes. Bun closes on larger frames: a 1009 close frame on macOS, none on Linux (1006).
+const MAX_CLIENT_MESSAGE_BYTES = 16 * 1024;
 
 interface ClientData {
   authenticated: boolean;
@@ -20,6 +22,7 @@ export interface ServerOptions {
   authTimeoutMs: number;
   pingIntervalMs: number;
   pongTimeoutMs: number;
+  development: boolean;
   store: Pick<SnapshotStore, "history" | "latest" | "subscribe">;
   getHealth: () => Health;
   meta: { coins: CoinSymbol[]; intervalMs: number };
@@ -44,7 +47,7 @@ export const createServer = (opts: ServerOptions): AppServer => {
 
   const server = Bun.serve({
     port: opts.port,
-    development: process.env.NODE_ENV !== "production",
+    development: opts.development,
     routes: {
       "/": opts.dashboard,
       "/health": () => {
@@ -60,6 +63,7 @@ export const createServer = (opts: ServerOptions): AppServer => {
       return upgraded ? undefined : new Response("Upgrade failed", { status: 400 });
     },
     websocket: {
+      maxPayloadLength: MAX_CLIENT_MESSAGE_BYTES,
       data: {} as ClientData,
       open(ws) {
         ws.data.authTimer = setTimeout(() => ws.close(CLOSE.authTimeout, "auth timeout"), opts.authTimeoutMs);

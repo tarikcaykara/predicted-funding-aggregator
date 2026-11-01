@@ -30,7 +30,7 @@ try {
   process.exit(1);
 }
 const source = new FundingSource({
-  client: new CoinalyzeClient({ apiKey: config.coinalyzeApiKey, limiter: new RateLimiter() }),
+  client: new CoinalyzeClient({ apiKey: config.coinalyzeApiKey, baseUrl: config.coinalyzeBaseUrl, limiter: new RateLimiter() }),
   coins: config.coins,
   intervalMs: config.intervalMs,
 });
@@ -45,6 +45,7 @@ const server = createServer({
   authTimeoutMs: config.authTimeoutMs,
   pingIntervalMs: config.pingIntervalMs,
   pongTimeoutMs: config.pongTimeoutMs,
+  development: config.development,
   store,
   getHealth: () => computeHealth(status, Date.now(), startedAt),
   meta: { coins: config.coins, intervalMs: config.intervalMs },

@@ -3,11 +3,6 @@ import type { RateLimiter } from "./rate-limiter.ts";
 
 const log = createLogger("coinalyze");
 
-export interface Exchange {
-  name: string;
-  code: string;
-}
-
 export interface FutureMarket {
   symbol: string;
   exchange: string;
@@ -60,10 +55,6 @@ export class CoinalyzeClient {
     this.limiter = opts.limiter;
     this.fetch = opts.fetch ?? globalThis.fetch;
     this.sleep = opts.sleep ?? Bun.sleep;
-  }
-
-  exchanges(): Promise<Exchange[]> {
-    return this.request<Exchange[]>("/exchanges");
   }
 
   futureMarkets(): Promise<FutureMarket[]> {

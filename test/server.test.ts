@@ -6,6 +6,7 @@ import type { Health } from "../src/health.ts";
 import { createServer } from "../src/server.ts";
 import { SnapshotStore } from "../src/store.ts";
 import type { Snapshot } from "../src/types.ts";
+import { connectWs } from "./ws-client.ts";
 
 const dir = await mkdtemp(join(tmpdir(), "coinalyze-server-"));
 const store = new SnapshotStore({ file: join(dir, "funding_rate.json"), historyFile: join(dir, "history.sqlite"), historyLimit: 10 });
@@ -37,6 +38,7 @@ const server = createServer({
   authTimeoutMs: 200,
   pingIntervalMs: 60000,
   pongTimeoutMs: 120000,
+  development: false,
   store,
   getHealth: () => health,
   meta: { coins: ["ETH"], intervalMs: 60000 },
@@ -48,32 +50,7 @@ afterAll(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-const connect = () => {
-  const ws = new WebSocket(`ws://127.0.0.1:${server.port}/ws`);
-  const queue: unknown[] = [];
-  let waiting: ((msg: unknown) => void) | null = null;
-  const opened = Promise.withResolvers<void>();
-  const closed = Promise.withResolvers<CloseEvent>();
-  ws.onopen = () => opened.resolve();
-  ws.onclose = (e) => closed.resolve(e);
-  ws.onmessage = (e) => {
-    const msg = JSON.parse(String(e.data));
-    if (waiting) {
-      const resolve = waiting;
-      waiting = null;
-      resolve(msg);
-    } else {
-      queue.push(msg);
-    }
-  };
-  const next = (): Promise<unknown> => {
-    if (queue.length > 0) return Promise.resolve(queue.shift());
-    const { promise, resolve } = Promise.withResolvers<unknown>();
-    waiting = resolve;
-    return promise;
-  };
-  return { ws, opened: opened.promise, closed: closed.promise, next };
-};
+const connect = () => connectWs(`ws://127.0.0.1:${server.port}/ws`);
 
 test("valid auth receives metadata, history with the latest breakdown, then live snapshots", async () => {
   const client = connect();
@@ -106,6 +83,23 @@ test("a client that never authenticates is closed with 4003", async () => {
   const client = connect();
   await client.opened;
   expect((await client.closed).code).toBe(4003);
+});
+
+test("a message of 16 KiB is parsed; one byte more closes the connection unparsed", async () => {
+  const atCap = connect();
+  await atCap.opened;
+  atCap.ws.send("x".repeat(16 * 1024));
+  expect(await atCap.next()).toEqual({ type: "error", message: "invalid json" });
+  atCap.ws.close();
+  await atCap.closed;
+
+  const overCap = connect();
+  await overCap.opened;
+  overCap.ws.send("x".repeat(16 * 1024 + 1));
+  // Bun sends a 1009 close frame on macOS but drops the connection without one on Linux (1006).
+  expect([1006, 1009]).toContain((await overCap.closed).code);
+  // An already-queued reply would win the race; none means the frame was never parsed.
+  expect(await Promise.race([overCap.next(), Promise.resolve("no reply")])).toBe("no reply");
 });
 
 test("/health returns the computed status code and body", async () => {

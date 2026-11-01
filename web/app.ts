@@ -46,6 +46,7 @@ const venueRow = $<HTMLTemplateElement>("#venue-row").content.firstElementChild 
 const axisMin = $<HTMLElement>("[data-axis-min]");
 const axisMax = $<HTMLElement>("[data-axis-max]");
 const axisOi = $<HTMLElement>(".axis__oi");
+const dataAnnounce = $<HTMLElement>("#data-announce");
 
 let socket: WebSocket | null = null;
 let reconnectTimer: number | undefined;
@@ -56,6 +57,14 @@ const history = new Map<CoinSymbol, HistoryPoint[]>();
 const latest = new Map<CoinSymbol, Snapshot>();
 /** Three poll intervals: older data is flagged STALE, and a longer pause between points is drawn as a gap. */
 const staleAfterMs = () => 3 * intervalMs;
+
+/** Spoken by `#data-announce` when the selected coin's data state changes. */
+const DATA_ANNOUNCE: Record<DataState, (coin: CoinSymbol) => string> = {
+  "waiting-data": (c) => `${c}: waiting for data`,
+  "waiting-oi": (c) => `${c}: AVG live, OI-weighted waiting for open interest`,
+  live: (c) => `${c}: live`,
+  stale: (c) => `${c}: data is stale`,
+};
 
 const setStatus = (status: Status) => {
   app.dataset.conn = status.toLowerCase();
@@ -69,11 +78,14 @@ const setStatus = (status: Status) => {
 
 const send = (ws: WebSocket, msg: ClientMessage) => ws.send(JSON.stringify(msg));
 
-const record = (point: HistoryPoint) => {
+/** Appends `point` to its coin's history; returns true when the oldest point was evicted. */
+const record = (point: HistoryPoint): boolean => {
   const list = history.get(point.symbol) ?? [];
   list.push(point);
-  if (list.length > HISTORY_LIMIT) list.splice(0, list.length - HISTORY_LIMIT);
   history.set(point.symbol, list);
+  if (list.length <= HISTORY_LIMIT) return false;
+  list.splice(0, list.length - HISTORY_LIMIT);
+  return true;
 };
 
 // ---- Formatting -----------------------------------------------------------
@@ -108,7 +120,11 @@ const setMetric = (id: string, text: string, note: string | null, tone: string, 
 
 const renderHeadline = () => {
   const s = latest.get(selected);
-  app.dataset.data = dataState(s);
+  const state = dataState(s);
+  app.dataset.data = state;
+  // Runs every second; only a change is written, so screen readers hear each transition once.
+  const text = DATA_ANNOUNCE[state](selected);
+  if (dataAnnounce.textContent !== text) dataAnnounce.textContent = text;
   for (const button of coinButtons) {
     const oi = latest.get(button.dataset.coin as CoinSymbol)?.oi_weighted_predicted_funding_rate ?? null;
     cell(button, ".coin__val").textContent = oi === null ? "—" : signed(oi, 5);
@@ -304,7 +320,7 @@ const toPoints = (points: HistoryPoint[], pick: Track["pick"]): ChartPoint[] => 
   return [...bySecond.values()];
 };
 
-const rebuildChart = () => {
+const rebuildChart = (fit = true) => {
   const points = history.get(selected) ?? [];
   for (const track of tracks) {
     const data = toPoints(points, track.pick);
@@ -312,14 +328,16 @@ const rebuildChart = () => {
     track.series.setData(tint === undefined ? data : data.map((d) => ("value" in d ? { ...d, color: tint(d.value) } : d)));
     track.lastTime = data.at(-1)?.time ?? 0;
   }
-  chart.timeScale().fitContent();
+  if (fit) chart.timeScale().fitContent();
 };
 
-const pushPoint = (p: HistoryPoint) => {
-  // `p` is already recorded; after a pause longer than staleAfterMs() redraw everything so the gap whitespace is inserted.
+const pushPoint = (p: HistoryPoint, evicted: boolean) => {
+  // `p` is already recorded. After a pause longer than staleAfterMs() redraw everything so the gap whitespace is
+  // inserted; after an eviction redraw so the series keeps HISTORY_LIMIT points.
   const prev = history.get(p.symbol)?.at(-2);
-  if (prev !== undefined && p.timestamp - prev.timestamp > staleAfterMs()) {
-    rebuildChart();
+  const gap = prev !== undefined && p.timestamp - prev.timestamp > staleAfterMs();
+  if (gap || evicted) {
+    rebuildChart(gap); // an eviction keeps the user's zoom
     return;
   }
   const time = Math.floor(p.timestamp / 1000);
@@ -337,7 +355,11 @@ const pushPoint = (p: HistoryPoint) => {
 
 const select = (coin: CoinSymbol) => {
   selected = coin;
-  for (const button of coinButtons) button.setAttribute("aria-selected", String(button.dataset.coin === coin));
+  for (const button of coinButtons) {
+    const active = button.dataset.coin === coin;
+    button.setAttribute("aria-selected", String(active));
+    button.tabIndex = active ? 0 : -1;
+  }
   for (const label of coinLabels) label.textContent = coin;
   renderHeadline();
   renderVenues();
@@ -357,6 +379,28 @@ for (const button of coinButtons) {
     if (isCoinSymbol(coin)) select(coin);
   });
 }
+
+// Tablist keyboard model: arrows move between visible coins (wrapping), Home/End jump; selection follows focus.
+$<HTMLElement>("#coins").addEventListener("keydown", (event) => {
+  const visible = coinButtons.filter((b) => !b.hidden);
+  const index = visible.findIndex((b) => b.dataset.coin === selected);
+  if (index === -1) return;
+  const target =
+    event.key === "ArrowRight" || event.key === "ArrowDown"
+      ? visible[(index + 1) % visible.length]
+      : event.key === "ArrowLeft" || event.key === "ArrowUp"
+        ? visible[(index - 1 + visible.length) % visible.length]
+        : event.key === "Home"
+          ? visible[0]
+          : event.key === "End"
+            ? visible.at(-1)
+            : undefined;
+  if (target === undefined) return;
+  event.preventDefault();
+  const coin = target.dataset.coin ?? "";
+  if (isCoinSymbol(coin)) select(coin);
+  target.focus();
+});
 
 // ---- Connection -----------------------------------------------------------
 
@@ -386,10 +430,10 @@ const handle = (ws: WebSocket, msg: ServerMessage) => {
       return;
     case "snapshot": {
       const { components: _, ...point } = msg;
-      record(point);
+      const evicted = record(point);
       latest.set(msg.symbol, msg);
       if (msg.symbol === selected) {
-        pushPoint(point);
+        pushPoint(point, evicted);
         renderVenues();
       }
       renderHeadline(); // other coins' buttons update too

@@ -152,6 +152,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .status-dot { width: var(--dot-status); height: var(--dot-status); border-radius: 50%; background: var(--conn-color); flex: none; }
 .app[data-conn="connecting"] .status-dot { animation: pulse 1s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: 0.3; } }
+@media (prefers-reduced-motion: reduce) { .app[data-conn="connecting"] .status-dot { animation: none; } }
 .conn-pill { display: none; align-items: center; gap: var(--space-2); padding: var(--space-1) var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-pill); font-family: var(--font-mono); font-size: var(--fs-xs); font-weight: var(--fw-semibold); color: var(--conn-color); white-space: nowrap; }
 
 /* ---------- auth ---------- */

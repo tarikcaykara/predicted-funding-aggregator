@@ -5,6 +5,7 @@ services:
     build: .
     image: predicted-funding-aggregator
     env_file: .env
+    # The image sets the same paths, but env_file beats image ENV and a copied .env.example sets ./ paths.
     environment:
       DATA_FILE: /app/data/funding_rate.json
       HISTORY_FILE: /app/data/history.sqlite

@@ -10,7 +10,7 @@ const log = createLogger("funding");
 const MARKET_REFRESH_MS = 24 * 60 * 60 * 1000;
 /** Max age of a market's open interest before it is refetched. */
 export const OI_REFRESH_MS = 600000;
-/** Persisted snapshots older than this are not used to seed open interest. */
+/** Persisted snapshots older than this, or dated in the future, are not used to seed open interest. */
 export const OI_SEED_MAX_AGE_MS = 30 * 60 * 1000;
 /** API calls kept free per cycle. */
 const CALL_MARGIN = 2;
@@ -190,7 +190,8 @@ export class FundingSource implements Source {
   seedOpenInterest(snapshots: Snapshot[]): void {
     let count = 0;
     for (const s of snapshots) {
-      if (this.now() - s.timestamp > OI_SEED_MAX_AGE_MS) continue;
+      const age = this.now() - s.timestamp;
+      if (age < 0 || age > OI_SEED_MAX_AGE_MS) continue;
       for (const c of s.components) {
         if (c.symbol === null || c.oi_usd === null || !Number.isFinite(c.oi_usd) || this.oiCache.has(c.symbol)) continue;
         this.oiCache.set(c.symbol, { value: c.oi_usd, fetchedAt: s.timestamp - OI_REFRESH_MS });

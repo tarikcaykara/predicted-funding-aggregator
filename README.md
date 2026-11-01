@@ -42,7 +42,7 @@ flowchart LR
 - **One loop.** Intervals are measured start-to-start and the first poll runs immediately. A failed cycle is logged, counted in `/health` and retried on the next cycle; the loop never exits the process.
 - **API budget.** Each symbol in a request costs one call, the limit is 40 calls per sliding 60 s window, and a request takes at most 20 symbols. Predicted rates are fetched first every cycle. Open interest is refreshed on a rolling basis: a market is refetched once its value is 10 min old, oldest first, a few markets per cycle using the spare budget. Defaults (3 coins × 10 venues at 60 s) still come to about 33 calls/min, with no 10-minute burst. A client-side sliding window mirrors the server's, so the client waits instead of being rejected. Two consecutive cycles never fit in one window, so each cycle's first request waits for the previous cycle's first request to leave it, and polls settle at about `INTERVAL_MS` + 250 ms. A 429 (for example from another process using the same key) is retried after `Retry-After` and logged as a warning.
 - **Caching.** The market list is cached for 24 h; open interest uses a per-market rolling refresh.
-- **Persistence.** The latest snapshot per coin is written to `funding_rate.json`, so a restart serves data immediately. On restart, open interest is also seeded from that file if it is at most 30 min old, so OI-weighted is available from the first poll. The chart history (the last 720 points per coin, about 12 h at 60 s) is written to the SQLite file `history.sqlite` in one transaction per cycle and pruned to the same 720 points per coin, so the dashboard chart survives a restart. After a downtime the chart shows the points before it, a gap, then the new points.
+- **Persistence.** The latest snapshot per coin is written to `funding_rate.json`, so a restart serves data immediately. On restart, open interest is also seeded from that file if it is at most 30 min old, so OI-weighted is available from the first poll. The chart history (the last 720 points per coin, about 12 h at 60 s) is written to the SQLite file `history.sqlite` in one transaction per cycle and pruned to the same 720 points per coin, so the dashboard chart survives a restart. After a downtime the chart shows the points before it, a gap, then the new points. `funding_rate.json` is replaced atomically (temp file + rename). If a write fails, live clients still get the snapshot, and the cycle counts as failed in `/health`.
 
 ## Methodology
 
@@ -132,7 +132,7 @@ bun install
 bun run start           # dashboard on http://localhost:3000, WebSocket on /ws
 ```
 
-Open the dashboard and enter your `AUTH_TOKEN`. It is masked by default; **Show** reveals it and **Hide** masks it again. The token is kept in the browser's `localStorage`, so the page reconnects on reload. Each coin button shows that coin's OI-weighted rate. Below the chart, every venue is a dot on a shared rate axis with AVG and OI-weighted markers: the dot's area is proportional to the venue's OI weight, rows are sorted by 8h rate, and excluded venues are struck through and hatched. The chart's lower pane shows the spread (OI-weighted − AVG). Time-axis labels show the date where the day changes. The data age and every headline value get a **STALE** marker when the last snapshot is older than three poll intervals. On screens narrower than 1100 px the sidebar moves above the content and each venue becomes a card.
+Open the dashboard and enter your `AUTH_TOKEN`. It is masked by default; **Show** reveals it and **Hide** masks it again. The token is kept in the browser's `localStorage`, so the page reconnects on reload. Each coin button shows that coin's OI-weighted rate; arrow keys, Home and End move between coins. Below the chart, every venue is a dot on a shared rate axis with AVG and OI-weighted markers: the dot's area is proportional to the venue's OI weight, rows are sorted by 8h rate, and excluded venues are struck through and hatched. The chart's lower pane shows the spread (OI-weighted − AVG). At each UTC day boundary the time axis shows the local date instead of a time; other labels and the crosshair use local time. The data age and every headline value get a **STALE** marker when the last snapshot is older than three poll intervals. On screens narrower than 1100 px the sidebar moves above the content and each venue becomes a card.
 
 The previous "Ledger" dashboard (v3.1) is archived at tag `v3.1.0`; its design export is in `design/handoff/ledger/`. To switch back: `git rm -r -q web && git checkout v3.1.0 -- web`, then run `bun run typecheck`. It flags anything in `web/app.ts` that a later protocol change broke.
 
@@ -146,26 +146,36 @@ docker compose up --build -d
 docker compose ps       # "healthy" after the first check
 ```
 
-- **Image:** about 240 MB. Based on the pinned `oven/bun:1.4.3-debian`, runs as the non-root `bun` user, with a `HEALTHCHECK` on `/health`.
-- **Persistence:** compose stores `funding_rate.json` and `history.sqlite` in the named volume `data` (`DATA_FILE=/app/data/funding_rate.json`, `HISTORY_FILE=/app/data/history.sqlite`), so the latest snapshots and the chart history survive container re-creation.
+- **Image:** about 240 MB. Based on the pinned `oven/bun:1.4.3-debian`, runs as the non-root `bun` user, which can write only `/app/data` (the application code is root-owned), with a `HEALTHCHECK` on `/health`.
+- **Persistence:** the image sets `DATA_FILE=/app/data/funding_rate.json` and `HISTORY_FILE=/app/data/history.sqlite`; compose sets the same paths (they override the `./` paths in a copied `.env`) and mounts the named volume `data` there, so the latest snapshots and the chart history survive container re-creation.
 - **Shutdown:** SIGTERM triggers a graceful shutdown.
+
+## Deployment security
+
+- The dashboard and `/ws` are plain HTTP. On `ws://` the token crosses the network in clear text.
+- Compose publishes the port on every interface. Beyond localhost or a trusted network, put the service behind a TLS reverse proxy (the dashboard then switches to `wss://` automatically) and restrict the port with a firewall.
+- `AUTH_TOKEN` must be at least 32 characters; generate it with `openssl rand -hex 32`.
+- Client messages over 16 KiB are rejected. Connection limits and rate limiting belong to the proxy.
+- `bun run start` serves the production bundle; `NODE_ENV=development` enables Bun's dev server and is for local development only.
 
 ## Configuration
 
 | Variable | Default | Description |
 |---|---|---|
-| `PORT` | `3000` | HTTP + WebSocket port |
-| `AUTH_TOKEN` | *(required)* | Token WebSocket clients must send; there is no default |
+| `PORT` | `3000` | HTTP + WebSocket port (1–65535) |
+| `AUTH_TOKEN` | *(required)* | Token WebSocket clients must send, at least 32 characters (e.g. `openssl rand -hex 32`); there is no default |
 | `COINALYZE_API_KEY` | *(required)* | Coinalyze API key |
+| `COINALYZE_BASE_URL` | `https://api.coinalyze.net/v1` | Coinalyze API base URL. For the e2e test's fake server or a proxy; http(s) only |
 | `COINS` | `BTC,ETH,SOL` | Comma-separated subset of `BTC`, `ETH`, `SOL` |
 | `INTERVAL_MS` | `60000` | Poll interval. 3 coins at 60 s ≈ 33 of the 40 calls/min |
 | `DATA_FILE` | `./funding_rate.json` | Where the latest snapshots are persisted |
 | `HISTORY_FILE` | `./history.sqlite` | SQLite file for the chart history (720 points per coin). The service exits 1 at startup if it cannot be opened |
 | `PING_INTERVAL_MS` | `30000` | WebSocket ping interval |
-| `PONG_TIMEOUT_MS` | `65000` | Close a client that hasn't sent a pong within this window |
+| `PONG_TIMEOUT_MS` | `65000` | Close a client that hasn't sent a pong within this window; must be greater than `PING_INTERVAL_MS` |
 | `AUTH_TIMEOUT_MS` | `10000` | Close a client that hasn't authenticated within this window |
+| `NODE_ENV` | *(unset)* | `development` serves the dashboard through Bun's dev server (HMR, error overlay); any other value serves the production bundle. The Docker image sets `production` |
 
-Integers must be positive whole numbers. A missing required variable or an invalid value stops the process at startup with a clear message.
+Integers must be positive whole numbers; timers are at most 2147483647 ms and `PORT` at most 65535. A missing required variable or an invalid value stops the process at startup with a clear message.
 
 ## WebSocket protocol
 
@@ -214,6 +224,7 @@ A `HistoryPoint` is a `Snapshot` without `components`.
 | `4001` | invalid token (the server sends `{"type":"auth","status":"error","message":"invalid token"}` first) |
 | `4002` | pong timeout |
 | `4003` | no auth message within `AUTH_TIMEOUT_MS` |
+| `1009` | a client message larger than 16 KiB, sent unparsed. On Linux (including the Docker image) Bun drops the connection without a close frame, so clients see `1006` |
 
 **Migrating from v1:**
 - `aggregated_predicted_funding_rate`, `coin` and `timestamp` keep their names.
@@ -234,7 +245,7 @@ Returns `200` with `"status":"ok"` while the last successful poll is within 3 in
 ## Development
 
 ```bash
-bun test            # unit + protocol tests; no network, no browser
+bun test            # unit, integration and e2e tests; loopback only, no external network, no browser
 bun run typecheck   # tsc --noEmit (strict)
 ```
 
@@ -258,7 +269,7 @@ src/
 web/                         dashboard (Bun HTML import + lightweight-charts, JetBrains Mono + Space Grotesk fonts)
 design/handoff/              design exports: number-line/ (current), ledger/ (v3.1, archived); not shipped in the image
 scripts/calibrate/           offline calibration (Playwright; dev dependency)
-test/                        bun:test suites
+test/                        bun:test suites; e2e.test.ts runs src/main.ts against fake-coinalyze.ts
 ```
 
 ## Design notes: v1 → v2

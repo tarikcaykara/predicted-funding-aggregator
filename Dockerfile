@@ -1,10 +1,13 @@
 FROM oven/bun:1.4.3-debian
-ENV NODE_ENV=production
+ENV NODE_ENV=production \
+    DATA_FILE=/app/data/funding_rate.json \
+    HISTORY_FILE=/app/data/history.sqlite
 WORKDIR /app
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile --production
-COPY --chown=bun:bun . .
-RUN mkdir -p /app/data && chown -R bun:bun /app
+COPY . .
+# Code stays root-owned; the non-root `bun` user can write only the data directory.
+RUN mkdir -p /app/data && chown bun:bun /app/data
 USER bun
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \

@@ -33,21 +33,21 @@ Runtime modes:
 | `src/types.ts` | `Snapshot` (wire = store = file format), `MarketComponent`, `HistoryPoint`, `Source`, `SourceStatus`. |
 | `src/protocol.ts` | WS `ClientMessage`/`ServerMessage`, `CLOSE` codes, `CHANNEL`, `HISTORY_LIMIT`. Shared by `server.ts` and `web/app.ts`. |
 | `src/log.ts` | `createLogger(scope)`: writes to **stderr only** (stdout is reserved for the calibration report). |
-| `src/store.ts` | `SnapshotStore`: latest per coin (persisted to `DATA_FILE`), history of `HistoryPoint`s (persisted to `HISTORY_FILE` via `bun:sqlite`, one transaction per `add`, pruned to `historyLimit` per coin; `load()` seeds history from the DB only, never from the JSON), subscribers. The constructor opens the DB and throws on a bad file; `main.ts` exits 1. |
+| `src/store.ts` | `SnapshotStore`: latest per coin (persisted to `DATA_FILE`), history of `HistoryPoint`s (persisted to `HISTORY_FILE` via `bun:sqlite`, one transaction per `add`, pruned to `historyLimit` per coin; `load()` seeds history from the DB only, never from the JSON), subscribers. `load()` validates every component; `add` notifies subscribers before writing SQLite and `DATA_FILE` (temp file + rename), so a persistence error fails the cycle without starving WS clients. The constructor opens the DB and throws on a bad file; `main.ts` exits 1. |
 | `src/loop.ts` | `runSourceLoop`: drift-free (start-to-start), first poll immediate, never throws/exits; `abortableSleep`. |
 | `src/health.ts` | `computeHealth` (pure): ok if a poll succeeded within 3 intervals (or startup grace), else 503. |
-| `src/server.ts` | `createServer`: `Bun.serve` routes + WS protocol. |
+| `src/server.ts` | `createServer`: `Bun.serve` routes + WS protocol; client messages capped at 16 KiB; dev server only when `development` (from `NODE_ENV=development`). |
 | `src/coinalyze/client.ts` | `CoinalyzeClient`: `api_key` header, ≤20 symbols per request, every attempt goes through the limiter, 429 `Retry-After` (3 attempts, each wait logged as WARN, the rejected call refunded to the limiter), 401 fails immediately; includes 1-minute history for calibration. |
 | `src/coinalyze/rate-limiter.ts` | Sliding window like the server's: 40 calls per 60 s, each call held 60 s + 250 ms margin; `acquire()` returns a refund for rejected requests. |
 | `src/funding/universe.ts` | **`VENUES`**: the ten venues (page label, exchange code, quote, `ratePeriodHours`). The single source of methodology truth, together with `STALE_AFTER_MS` (defined in `source.ts`). |
 | `src/funding/aggregate.ts` | `aggregate()` (pure AVG + OI-weighted). |
 | `src/funding/source.ts` | `FundingSource`: resolves venues against `/future-markets` (24h cache), rolling per-market OI refresh (oldest first, refetched once ≥ `OI_REFRESH_MS` old, spare budget per cycle), OI seeded from persisted snapshots, OI-weighted null until every used venue has OI, an OI failure does not block AVG, staleness filter, components, budget warning. Clock injectable. |
 | `scripts/calibrate/*` | `main.ts` (CLI), `analyze.ts` (pure: venue ratios, lag-aligned MAD, history SMA), `chart-page.ts`, `browser.ts`, `parse.ts`. |
-| `web/index.html`, `web/app.ts`, `web/style.css`, `web/fonts/` | Dashboard, "Number Line" design: sidebar with token field (Show/Hide toggle), coin buttons carrying each coin's OI-weighted value, data age; headline metrics (AVG, OI-weighted, spread, venues used + pips); AVG/OI-weighted lines over a spread histogram pane (local time with the date at day changes, a whitespace gap where consecutive points are more than 3 intervals apart, colours read from the `--chart-*` tokens); venue rows cloned from `#venue-row` as dots on a shared rate axis (dot area ∝ OI weight, AVG/OI markers, sorted by 8h rate, excluded hatched; cards below 1100 px). CSS keys every state on `#app[data-conn]` (`disconnected`/`connecting`/`connected`/`rejected`) and `#app[data-data]` (`waiting-data`/`waiting-oi`/`live`/`stale`; stale beats waiting-oi); `.v[data-status]` carries the wire value `unlisted`, not the export fixture's `not_listed`. `index.html` = the export's markup minus Google Fonts, plus `./style.css`, `./app.ts` and the `#history-window` span. `style.css` = JetBrains Mono + Space Grotesk `@font-face` rules + a `[hidden]` rule (`hidden` must beat `.coin { display: flex }`) + the export's `styles.css` minus its states-board section. Reference renderer: `design/handoff/number-line/app.js`. Bun HTML import (inlines the fonts as `data:` URIs), `lightweight-charts` v5. The previous "Ledger" dashboard is archived at tag `v3.1.0` (restore command in the README). |
+| `web/index.html`, `web/app.ts`, `web/style.css`, `web/fonts/` | Dashboard, "Number Line" design: sidebar with token field (Show/Hide toggle; no `name`, so a native submit cannot put the token in a URL), coin buttons carrying each coin's OI-weighted value (a tablist: arrows/Home/End, selection follows focus), data age; headline metrics (AVG, OI-weighted, spread, venues used + pips); AVG/OI-weighted lines over a spread histogram pane (local time, with the local date at UTC day boundaries, a whitespace gap where consecutive points are more than 3 intervals apart, colours read from the `--chart-*` tokens; a live point that evicts the oldest redraws the series without resetting the zoom, so it stays at `HISTORY_LIMIT` points); venue rows cloned from `#venue-row` as dots on a shared rate axis (dot area ∝ OI weight, AVG/OI markers, sorted by 8h rate, excluded hatched; cards below 1100 px). CSS keys every state on `#app[data-conn]` (`disconnected`/`connecting`/`connected`/`rejected`) and `#app[data-data]` (`waiting-data`/`waiting-oi`/`live`/`stale`; stale beats waiting-oi); the `#data-announce` live region speaks each data-state change of the selected coin; the connecting pulse stops under `prefers-reduced-motion`. `.v[data-status]` carries the wire value `unlisted`, not the export fixture's `not_listed`. `index.html` = the export's markup minus Google Fonts and the token's `name`, plus `./style.css`, `./app.ts`, the `#history-window` span and `#data-announce`. `style.css` = JetBrains Mono + Space Grotesk `@font-face` rules + a `[hidden]` rule (`hidden` must beat `.coin { display: flex }`) + the export's `styles.css` minus its states-board section, plus the reduced-motion rule. Reference renderer: `design/handoff/number-line/app.js`. Bun HTML import (inlines the fonts as `data:` URIs), `lightweight-charts` v5. The previous "Ledger" dashboard is archived at tag `v3.1.0` (restore command in the README). |
 | `design/handoff/` | Claude Design reference exports, each with `screens/`, not imported by `web/` and excluded from the Docker image. `number-line/` (current): `index.html?state=…` and `states.html` render every state offline from `data.js`; `app.js` is the reference renderer. `ledger/` (v3.1, archived): DOM contract in `ledger/README.md`. |
-| `test/*.test.ts` | `bun:test`; no network, no browser. |
-| `Dockerfile`, `docker-compose.yml` | Pinned `oven/bun:1.4.3-debian`, production deps only (~240 MB), non-root, healthcheck; compose adds the `data` volume and `init`. |
-| `.github/workflows/ci.yml` | `bun install --frozen-lockfile` → `bun run typecheck` → `bun test`. |
+| `test/*.test.ts` | `bun:test`; no external network, no browser. `e2e.test.ts` spawns `src/main.ts` against `fake-coinalyze.ts` (cold start, restart, startup errors); `ws-client.ts` is the shared WS test client. |
+| `Dockerfile`, `docker-compose.yml` | Pinned `oven/bun:1.4.3-debian`, production deps only (~240 MB), code root-owned, only `/app/data` writable by the non-root `bun` user, sets `DATA_FILE`/`HISTORY_FILE` under `/app/data`, healthcheck; compose adds the `data` volume and `init`, and repeats the data paths because `env_file` beats image `ENV` and a copied `.env.example` sets `./` paths. |
+| `.github/workflows/ci.yml` | `bun install --frozen-lockfile` → `bun run typecheck` → `bun test`; `contents: read` token, no persisted credentials. |
 
 ## Configuration (env vars)
 
@@ -55,16 +55,18 @@ Bun auto-loads `.env`. Do NOT use `dotenv`. All parsing happens in `src/config.t
 
 | Variable | Default | Notes |
 |---|---|---|
-| `PORT` | `3000` | |
-| `AUTH_TOKEN` | none | Required. There is no default token, and `.env.example` leaves it empty on purpose: a copied file stops at startup until a token is set. |
+| `PORT` | `3000` | 1–65535 |
+| `AUTH_TOKEN` | none | Required. At least 32 characters. There is no default token, and `.env.example` leaves it empty on purpose: a copied file stops at startup until a token is set. |
 | `COINALYZE_API_KEY` | none | Always required |
+| `COINALYZE_BASE_URL` | `https://api.coinalyze.net/v1` | Coinalyze API base URL. For the e2e test's fake server or a proxy; http(s) only |
 | `COINS` | `BTC,ETH,SOL` | Must be keys of `COIN_REGISTRY` |
 | `INTERVAL_MS` | `60000` | 3 coins × 10 venues at 60 s ≈ 33 of 40 calls/min |
-| `DATA_FILE` | `./funding_rate.json` | Compose sets `/app/data/funding_rate.json` on a named volume |
-| `HISTORY_FILE` | `./history.sqlite` | Chart history DB; compose sets `/app/data/history.sqlite` on the same volume |
+| `DATA_FILE` | `./funding_rate.json` | The Docker image and compose set `/app/data/funding_rate.json` (compose mounts the `data` volume there) |
+| `HISTORY_FILE` | `./history.sqlite` | Chart history DB. The Docker image and compose set `/app/data/history.sqlite` (same volume) |
 | `PING_INTERVAL_MS` | `30000` | |
-| `PONG_TIMEOUT_MS` | `65000` | |
+| `PONG_TIMEOUT_MS` | `65000` | Must be greater than `PING_INTERVAL_MS` |
 | `AUTH_TIMEOUT_MS` | `10000` | |
+| `NODE_ENV` | unset | `development` serves the dashboard through Bun's dev server (HMR, error overlay); any other value serves the production bundle. The Docker image sets `production` |
 
 ## WebSocket contract
 
@@ -72,7 +74,7 @@ Bun auto-loads `.env`. Do NOT use `dotenv`. All parsing happens in `src/config.t
 - The client sends `{"type":"auth","token"}` within `AUTH_TIMEOUT_MS`. The server replies `{"type":"auth","status":"ok",coins,interval_ms}` and then `{"type":"history",points,latest}`.
 - After that, each `Snapshot` (with `components`) is published on the `"funding-rate"` channel. Consumers filter by `symbol`.
 - Keepalive: server `{"type":"ping"}` → client `{"type":"pong"}`.
-- Close codes: `4001` invalid token, `4002` pong timeout, `4003` auth timeout.
+- Close codes: `4001` invalid token, `4002` pong timeout, `4003` auth timeout. A client message over 16 KiB closes the connection unparsed: Bun sends 1009 on macOS but drops the socket without a close frame on Linux, where clients see 1006.
 - `Snapshot` keeps the v1 fields `aggregated_predicted_funding_rate`, `coin` (slug) and `timestamp`. Changing those names breaks v1 consumers.
 
 ## Non-obvious gotchas (read before changing methodology or the calibration tool)
@@ -130,7 +132,8 @@ Headed mode, a separate server file, the live chart source, the `--once` mode (`
 
 - **Modular TypeScript under `src/`.** One responsibility per module (see the module map). Keep pure logic (`aggregate`, `parse`, `health`, `config`) free of I/O so it stays unit-testable.
 - **Explicit `.ts` import extensions** (`allowImportingTsExtensions`, `verbatimModuleSyntax`). Use `import type` for type-only imports.
-- **Checks:** `bun test` and `bun run typecheck` must pass; CI runs both. Tests must not touch the network or launch a browser; inject fakes (`fetch`, `sleep`, `now`, `launch`).
+- **Checks:** `bun test` and `bun run typecheck` must pass; CI runs both. Tests must not reach the external network or launch a browser; loopback servers on port 0 and child processes of `src/main.ts` are fine. Inject fakes (`fetch`, `sleep`, `now`, `launch`) or point `COINALYZE_BASE_URL` at `test/fake-coinalyze.ts`.
+- **Test-first, at the lowest layer that proves the behaviour.** For a bug, first add a test that fails on the current code and run it red, then fix. For a feature, write the test of the new behaviour before the code. Pure logic gets a unit test; protocol, persistence and client behaviour get an integration test in the existing suites (`server.test.ts`, `store.test.ts`, `client.test.ts`); `test/e2e.test.ts` changes only when startup, the WS contract, persistence across restarts or the dashboard route change. Behaviour that exists only in the dashboard's DOM or canvas has no test suite: check it in a browser against the service and `test/fake-coinalyze.ts`, and describe the check in the PR.
 - **When behavior changes, update `README.md` in the same commit.** The v1 README drifted badly.
 - **Bun only.** Use `bun install`, `bun run`, `bun test` and `bunx`, never npm, node or npx. Prefer `Bun.*` APIs and built-ins (`Bun.serve`, `Bun.file`/`Bun.write`, `bun:sqlite`, global `WebSocket`) over `node:*` modules and npm packages such as `express`, `ws` or `better-sqlite3`. The dashboard is a Bun HTML import; there is no Vite or bundler config.
 - **Style:** 2-space indent, double quotes, semicolons, arrow functions for top-level helpers. No linter/formatter enforced.
