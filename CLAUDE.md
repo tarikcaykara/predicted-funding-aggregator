@@ -33,7 +33,7 @@ Runtime modes:
 | `src/types.ts` | `Snapshot` (wire = store = file format), `MarketComponent`, `HistoryPoint`, `Source`, `SourceStatus`. |
 | `src/protocol.ts` | WS `ClientMessage`/`ServerMessage`, `CLOSE` codes, `CHANNEL`, `HISTORY_LIMIT`. Shared by `server.ts` and `web/app.ts`. |
 | `src/log.ts` | `createLogger(scope)`: writes to **stderr only** (stdout is reserved for the calibration report). |
-| `src/store.ts` | `SnapshotStore`: latest per coin (persisted to `DATA_FILE`), history of `HistoryPoint`s (persisted to `HISTORY_FILE` via `bun:sqlite`, one transaction per `add`, pruned to `historyLimit` per coin; `load()` seeds history from the DB only, never from the JSON), subscribers. The constructor opens the DB and throws on a bad file; `main.ts` exits 1. |
+| `src/store.ts` | `SnapshotStore`: latest per coin (persisted to `DATA_FILE`), history of `HistoryPoint`s (persisted to `HISTORY_FILE` via `bun:sqlite`, one transaction per `add`, pruned to `historyLimit` per coin; `load()` seeds history from the DB only, never from the JSON), subscribers. `load()` validates every component; `add` notifies subscribers before writing SQLite and `DATA_FILE` (temp file + rename), so a persistence error fails the cycle without starving WS clients. The constructor opens the DB and throws on a bad file; `main.ts` exits 1. |
 | `src/loop.ts` | `runSourceLoop`: drift-free (start-to-start), first poll immediate, never throws/exits; `abortableSleep`. |
 | `src/health.ts` | `computeHealth` (pure): ok if a poll succeeded within 3 intervals (or startup grace), else 503. |
 | `src/server.ts` | `createServer`: `Bun.serve` routes + WS protocol; client messages capped at 16 KiB; dev server only when `development` (from `NODE_ENV=development`). |

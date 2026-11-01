@@ -1,7 +1,8 @@
 import { Database } from "bun:sqlite";
+import { rename } from "node:fs/promises";
 import { isCoinSymbol } from "./coins.ts";
 import { createLogger } from "./log.ts";
-import type { HistoryPoint, Snapshot } from "./types.ts";
+import type { ComponentStatus, HistoryPoint, MarketComponent, Snapshot } from "./types.ts";
 
 const log = createLogger("store");
 
@@ -17,8 +18,29 @@ const isHistoryPoint = (value: unknown): value is HistoryPoint => {
   );
 };
 
-const isSnapshot = (value: unknown): value is Snapshot =>
-  isHistoryPoint(value) && Array.isArray((value as Record<string, unknown>).components);
+const COMPONENT_STATUSES: ReadonlySet<ComponentStatus> = new Set(["used", "stale", "no_rate", "unlisted"]);
+const isNullableNumber = (v: unknown) => v === null || Number.isFinite(v);
+
+const isComponent = (value: unknown): value is MarketComponent => {
+  if (typeof value !== "object" || value === null) return false;
+  const c = value as Record<string, unknown>;
+  return (
+    typeof c.venue === "string" &&
+    (c.symbol === null || typeof c.symbol === "string") &&
+    isNullableNumber(c.predicted_rate) &&
+    Number.isFinite(c.rate_period_hours) &&
+    isNullableNumber(c.rate_8h) &&
+    isNullableNumber(c.oi_usd) &&
+    isNullableNumber(c.updated_at) &&
+    COMPONENT_STATUSES.has(c.status as ComponentStatus)
+  );
+};
+
+const isSnapshot = (value: unknown): value is Snapshot => {
+  if (!isHistoryPoint(value)) return false;
+  const components = (value as Record<string, unknown>).components;
+  return Array.isArray(components) && components.every(isComponent);
+};
 
 /** Latest snapshot per coin (persisted to `file`) plus a bounded history of aggregate points (persisted to `historyFile`). */
 export class SnapshotStore {
@@ -65,6 +87,10 @@ export class SnapshotStore {
     this.loadHistory();
   }
 
+  /**
+   * Subscribers get the snapshots before SQLite and `file` are written, so a persistence error still
+   * reaches live clients; it then rejects, and the loop counts the cycle as failed.
+   */
   async add(snaps: Snapshot[]): Promise<void> {
     const points: HistoryPoint[] = [];
     for (const s of snaps) {
@@ -73,11 +99,14 @@ export class SnapshotStore {
       this.pushHistory(point);
       points.push(point);
     }
-    this.appendHistory(points);
-    await Bun.write(this.file, JSON.stringify(this.latest(), null, 2));
     for (const s of snaps) {
       for (const fn of this.subscribers) fn(s);
     }
+    this.appendHistory(points);
+    // Same-directory rename is atomic, so a crash mid-write never truncates `file`.
+    const tmp = `${this.file}.tmp`;
+    await Bun.write(tmp, JSON.stringify(this.latest(), null, 2));
+    await rename(tmp, this.file);
   }
 
   latest(): Snapshot[] {

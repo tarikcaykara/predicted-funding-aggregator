@@ -83,6 +83,28 @@ test("latest() is persisted and re-seeded by load(), skipping invalid entries", 
   expect(reloaded.history().map((p) => p.timestamp)).toEqual([1, 2]);
 });
 
+test("load() skips snapshots whose components are malformed", async () => {
+  await Bun.write(
+    file,
+    JSON.stringify([snap("BTC", 1), { ...snap("ETH", 2), components: [null] }, { ...snap("ETH", 3), components: [{ venue: "X" }] }]),
+  );
+  const store = new SnapshotStore({ file, historyFile, historyLimit: 10 });
+  await store.load();
+  expect(store.latest()).toEqual([snap("BTC", 1)]);
+});
+
+test("a DATA_FILE write failure still publishes to subscribers and rejects add()", async () => {
+  // The data file's parent is a regular file, so every write under it fails.
+  const blocker = join(dir, "blocker");
+  await Bun.write(blocker, "");
+  const store = new SnapshotStore({ file: join(blocker, "funding_rate.json"), historyFile, historyLimit: 10 });
+  const received: number[] = [];
+  store.subscribe((s) => received.push(s.timestamp));
+  await expect(store.add([snap("ETH", 1)])).rejects.toThrow();
+  expect(received).toEqual([1]);
+  expect(store.history().map((p) => p.timestamp)).toEqual([1]);
+});
+
 test("history survives a restart, capped per coin in memory and on disk", async () => {
   const before = new SnapshotStore({ file, historyFile, historyLimit: 2 });
   await before.add([snap("ETH", 1), snap("ETH", 3), snap("BTC", 2)]);
