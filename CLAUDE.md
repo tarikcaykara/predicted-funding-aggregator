@@ -47,7 +47,8 @@ Runtime modes:
 | `design/handoff/` | Claude Design reference exports, each with `screens/`, not imported by `web/` and excluded from the Docker image. `number-line/` (current): `index.html?state=…` and `states.html` render every state offline from `data.js`; `app.js` is the reference renderer. `ledger/` (v3.1, archived): DOM contract in `ledger/README.md`. |
 | `test/*.test.ts` | `bun:test`; no external network, no browser. `e2e.test.ts` spawns `src/main.ts` against `fake-coinalyze.ts` (cold start, restart, startup errors); `ws-client.ts` is the shared WS test client. |
 | `Dockerfile`, `docker-compose.yml` | Pinned `oven/bun:1.4.3-debian`, production deps only (~240 MB), code root-owned, only `/app/data` writable by the non-root `bun` user, sets `DATA_FILE`/`HISTORY_FILE` under `/app/data`, healthcheck; compose adds the `data` volume and `init`, and repeats the data paths because `env_file` beats image `ENV` and a copied `.env.example` sets `./` paths. |
-| `.github/workflows/ci.yml` | `bun install --frozen-lockfile` → `bun run typecheck` → `bun test`; `contents: read` token, no persisted credentials. |
+| `.github/workflows/ci.yml` | `bun install --frozen-lockfile` → `bun run typecheck` → `bun test`; `contents: read` token, no persisted credentials, actions pinned to commit SHAs. |
+| `.github/dependabot.yml` | Weekly Dependabot version updates for `bun` and `github-actions`; policy in "Dependencies" below. |
 
 ## Configuration (env vars)
 
@@ -137,5 +138,20 @@ Headed mode, a separate server file, the live chart source, the `--once` mode (`
 - **When behavior changes, update `README.md` in the same commit.** The v1 README drifted badly.
 - **Bun only.** Use `bun install`, `bun run`, `bun test` and `bunx`, never npm, node or npx. Prefer `Bun.*` APIs and built-ins (`Bun.serve`, `Bun.file`/`Bun.write`, `bun:sqlite`, global `WebSocket`) over `node:*` modules and npm packages such as `express`, `ws` or `better-sqlite3`. The dashboard is a Bun HTML import; there is no Vite or bundler config.
 - **Style:** 2-space indent, double quotes, semicolons, arrow functions for top-level helpers. No linter/formatter enforced.
-- **Commits and branches follow Conventional Commits** (`feat:`, `fix:`, `refactor:`, `docs:`, `build:`, `perf:`; branches like `feat/<topic>`).
+- **Commits and branches follow Conventional Commits** (`feat:`, `fix:`, `refactor:`, `docs:`, `build:`, `ci:`, `perf:`; branches like `feat/<topic>`).
 - **PRs are squash-merged into `master`**, one commit per PR titled with the PR title. Release tags go on the squash commit. Reference PR numbers or squash commits in "Project evolution", because branch hashes do not reach `master`. After a merge, pull `master` and delete the merged local branch with `git branch -D` (`-d` refuses squash-merged branches); check first that its content is on `master`.
+
+## Dependencies
+
+- **Dependabot** (`.github/dependabot.yml`) opens update PRs weekly, each release only after a 7-day cooldown; security updates do not wait.
+  - Bun packages come as `build(deps)` / `build(deps-dev)`. Minor and patch updates of the dev tooling are grouped as `dev-tooling`. `lightweight-charts` (the only runtime package) and every major update come alone.
+  - GitHub Actions come as `ci(deps)`. Actions are pinned to a commit SHA with a `# vX.Y.Z` comment, which Dependabot updates together; pin any new action the same way.
+- **Reviewing a Dependabot PR.** CI must pass as for any PR (typecheck and every test, e2e included). For a major update, read the changelog first.
+  - `lightweight-charts`: CI only proves the bundle builds. Check the dashboard chart in a browser against `test/fake-coinalyze.ts`, as the test-first rule says, and note the check in the PR.
+  - `playwright`, `playwright-extra`, `puppeteer-extra-plugin-stealth`: dev-only. Run `bunx playwright install chromium` before the next `bun run calibrate`.
+- **The Bun runtime is not updated by Dependabot** (`@types/bun` is ignored, the `docker` ecosystem is not configured): the image, CI and the type definitions must move together. Bump them by hand in one PR:
+  - `Dockerfile`: `FROM oven/bun:<version>-debian`;
+  - `.github/workflows/ci.yml`: `bun-version`;
+  - `package.json`: `@types/bun`, then `bun install` to update `bun.lock`;
+  - the image version in README "Docker / Compose" and in the `Dockerfile` row of the module map (the README badge shows only the minor).
+- **Alerts.** Dependabot alerts and security updates are enabled in the repository settings. GitHub's dependency graph does not read `bun.lock`: it sees only `package.json` (direct dependencies, by declared range) and the actions in `ci.yml`, so alerts and security updates never cover transitive packages. `bun audit` is the check for those. It currently reports `deepmerge` (low) and `minimatch` (moderate): both dev-only, reached through `puppeteer-extra-plugin-stealth`, absent from the image, with no patched version in range; re-check them whenever the stealth plugin changes.
