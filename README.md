@@ -6,7 +6,7 @@
 [![Docker](https://img.shields.io/badge/Docker-compose-2496ed?logo=docker&logoColor=white)](https://www.docker.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A self-hosted Bun + TypeScript service that computes the cross-venue **aggregated predicted funding rate** for BTC, ETH and SOL from the official Coinalyze API, normalized to % per 8h, and streams it over an authenticated WebSocket. Every published number can be traced to its venues: a live dashboard shows the simple and open-interest-weighted averages next to the per-venue breakdown they come from.
+A self-hosted Bun + TypeScript service that computes the cross-venue **aggregated predicted funding rate** for BTC, ETH and SOL from the official Coinalyze API, normalized to % per 8h, and streams it over an authenticated WebSocket. Every published number can be traced to its venues: a live dashboard shows the simple and open-interest-weighted averages next to the per-venue breakdown they come from. Every point is archived in SQLite and can be exported as CSV or JSON.
 
 ![Live dashboard, Number Line view for ETH: AVG, OI-weighted, spread and venues used, the history chart with its spread pane, and every venue as a dot on a shared rate axis](docs/dashboard.png)
 
@@ -27,13 +27,15 @@ flowchart LR
   API["Coinalyze REST API<br/>/future-markets · /predicted-funding-rate · /open-interest"]
   API --> SRC["FundingSource<br/>10 venues per coin · stale filter · 8h normalization"]
   SRC -->|every INTERVAL_MS| LOOP[runSourceLoop]
-  LOOP --> STORE[("SnapshotStore<br/>latest + 720 points per coin")]
+  LOOP --> STORE[("SnapshotStore<br/>latest + 720 points per coin in memory")]
   STORE --> FILE[funding_rate.json]
-  STORE --> DB[(history.sqlite)]
+  STORE --> DB[("history.sqlite<br/>every point")]
   STORE --> WS["WebSocket /ws<br/>channel funding-rate"]
+  DB --> EXPORT["GET /export<br/>CSV · JSON"]
   LOOP -. status .-> HEALTH["GET /health"]
   WS --> DASH["Dashboard GET /"]
   WS --> CLIENTS[Your services]
+  EXPORT --> CLIENTS
   subgraph offline ["Offline: bun run calibrate"]
     CAL["chart legend + page table + API history<br/>→ calibration report"]
   end
@@ -42,7 +44,8 @@ flowchart LR
 - **One loop.** Intervals are measured start-to-start and the first poll runs immediately. A failed cycle is logged, counted in `/health` and retried on the next cycle; the loop never exits the process.
 - **API budget.** Each symbol in a request costs one call, the limit is 40 calls per sliding 60 s window, and a request takes at most 20 symbols. Predicted rates are fetched first every cycle. Open interest is refreshed on a rolling basis: a market is refetched once its value is 10 min old, oldest first, a few markets per cycle using the spare budget. Defaults (3 coins × 10 venues at 60 s) still come to about 33 calls/min, with no 10-minute burst. A client-side sliding window mirrors the server's, so the client waits instead of being rejected. Two consecutive cycles never fit in one window, so each cycle's first request waits for the previous cycle's first request to leave it, and polls settle at about `INTERVAL_MS` + 250 ms. A 429 (for example from another process using the same key) is retried after `Retry-After` and logged as a warning.
 - **Caching.** The market list is cached for 24 h; open interest uses a per-market rolling refresh.
-- **Persistence.** The latest snapshot per coin is written to `funding_rate.json`, so a restart serves data immediately. On restart, open interest is also seeded from that file if it is at most 30 min old, so OI-weighted is available from the first poll. The chart history (the last 720 points per coin, about 12 h at 60 s) is written to the SQLite file `history.sqlite` in one transaction per cycle and pruned to the same 720 points per coin, so the dashboard chart survives a restart. After a downtime the chart shows the points before it, a gap, then the new points. `funding_rate.json` is replaced atomically (temp file + rename). If a write fails, live clients still get the snapshot, and the cycle counts as failed in `/health`.
+- **Persistence.** The latest snapshot per coin is written to `funding_rate.json`, so a restart serves data immediately. On restart, open interest is also seeded from that file if it is at most 30 min old, so OI-weighted is available from the first poll. Every point is written to the SQLite file `history.sqlite` in one transaction per cycle and kept, unless `HISTORY_RETENTION_DAYS` is set. The dashboard chart and the WebSocket `history` message use the last 720 points per coin (about 12 h at 60 s), so the chart survives a restart. After a downtime the chart shows the points before it, a gap, then the new points. `funding_rate.json` is replaced atomically (temp file + rename). If a write fails, live clients still get the snapshot, and the cycle counts as failed in `/health`.
+- **Archive.** The archive is the only copy of the aggregate. Coinalyze has no aggregate endpoint and keeps only the last 1500–2000 points of each intraday series ([API docs](https://api.coinalyze.net/v1/doc/)), so lost points cannot be fetched again. Three coins at 60 s add about 1 MB a day. [`GET /export`](#get-export) reads it.
 
 ## Methodology
 
@@ -147,12 +150,12 @@ docker compose ps       # "healthy" after the first check
 ```
 
 - **Image:** about 260 MB. Based on the pinned `oven/bun:1.4.4-debian`, runs as the non-root `bun` user, which can write only `/app/data` (the application code is root-owned), with a `HEALTHCHECK` on `/health`. `.dockerignore` is an allowlist: only `package.json`, `bun.lock`, `tsconfig.json`, `LICENSE`, `src/` and `web/` enter the image, so untracked files in the checkout stay out of it.
-- **Persistence:** the image sets `DATA_FILE=/app/data/funding_rate.json` and `HISTORY_FILE=/app/data/history.sqlite`; compose sets the same paths (they override the `./` paths in a copied `.env`) and mounts the named volume `data` there, so the latest snapshots and the chart history survive container re-creation.
+- **Persistence:** the image sets `DATA_FILE=/app/data/funding_rate.json` and `HISTORY_FILE=/app/data/history.sqlite`; compose sets the same paths (they override the `./` paths in a copied `.env`) and mounts the named volume `data` there, so the latest snapshots and the history archive survive container re-creation.
 - **Shutdown:** SIGTERM triggers a graceful shutdown.
 
 ## Deployment security
 
-- The dashboard and `/ws` are plain HTTP. On `ws://` the token crosses the network in clear text.
+- The dashboard, `/ws` and `/export` are plain HTTP. On `ws://` the token crosses the network in clear text, and so does the `Authorization` header of an export.
 - Compose publishes the port on every interface. Beyond localhost or a trusted network, put the service behind a TLS reverse proxy (the dashboard then switches to `wss://` automatically) and restrict the port with a firewall.
 - `AUTH_TOKEN` must be at least 32 characters; generate it with `openssl rand -hex 32`.
 - Client messages over 16 KiB are rejected. Connection limits and rate limiting belong to the proxy.
@@ -169,7 +172,8 @@ docker compose ps       # "healthy" after the first check
 | `COINS` | `BTC,ETH,SOL` | Comma-separated subset of `BTC`, `ETH`, `SOL` |
 | `INTERVAL_MS` | `60000` | Poll interval. 3 coins at 60 s ≈ 33 of the 40 calls/min |
 | `DATA_FILE` | `./funding_rate.json` | Where the latest snapshots are persisted |
-| `HISTORY_FILE` | `./history.sqlite` | SQLite file for the chart history (720 points per coin). The service exits 1 at startup if it cannot be opened |
+| `HISTORY_FILE` | `./history.sqlite` | SQLite archive of every history point. The service exits 1 at startup if it cannot be opened |
+| `HISTORY_RETENTION_DAYS` | *(unset)* | Delete history points more than this many days older than a coin's newest point (1–36500). Unset or blank keeps every point |
 | `PING_INTERVAL_MS` | `30000` | WebSocket ping interval |
 | `PONG_TIMEOUT_MS` | `65000` | Close a client that hasn't sent a pong within this window; must be greater than `PING_INTERVAL_MS` |
 | `AUTH_TIMEOUT_MS` | `10000` | Close a client that hasn't authenticated within this window |
@@ -242,6 +246,30 @@ Returns `200` with `"status":"ok"` while the last successful poll is within 3 in
 { "status": "ok", "uptime_s": 1034, "interval_ms": 60000, "last_success_at": 1792094065961, "consecutive_failures": 0, "last_error": null }
 ```
 
+## `GET /export`
+
+Streams one coin's archived points from `history.sqlite` as CSV (default) or a JSON array of `HistoryPoint`s. The token goes in a header, never in the URL, so it stays out of access logs and shell history.
+
+```bash
+curl -H "Authorization: Bearer $AUTH_TOKEN" "http://localhost:3000/export?symbol=BTC&from=1793664000000" -o btc.csv
+```
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `symbol` | *(required)* | `BTC`, `ETH` or `SOL`, case-insensitive; coins no longer in `COINS` can still be exported |
+| `from` | `0` | Inclusive start, ms since the epoch |
+| `to` | *(no limit)* | Exclusive end, ms since the epoch |
+| `format` | `csv` | `csv` or `json` |
+
+```csv
+timestamp,time,symbol,aggregated_predicted_funding_rate,oi_weighted_predicted_funding_rate,markets
+1793715070637,2026-11-03T14:11:10.637Z,BTC,0.008745357142857143,,7
+```
+
+- Rates are % per 8h, at full precision. An empty `oi_weighted_predicted_funding_rate` means OI-weighted was not available for that point, as in this first poll after a cold start. `time` is the UTC form of `timestamp`.
+- A missing or wrong token returns `401` with `WWW-Authenticate: Bearer`. An invalid parameter returns `400` with `{"error": "…"}`.
+- The response is streamed 1000 rows at a time, so a long range does not build up in memory, and polling continues while it is read.
+
 ## Development
 
 ```bash
@@ -259,10 +287,11 @@ src/
   types.ts                   Snapshot, MarketComponent, Source
   protocol.ts                WebSocket messages, close codes, history limit (shared with web/)
   log.ts                     stderr logger (stdout is reserved for the calibration report)
-  store.ts                   SnapshotStore (latest → funding_rate.json, history → history.sqlite)
+  store.ts                   SnapshotStore (latest → funding_rate.json, every point → history.sqlite, range reads)
+  export.ts                  /export query parsing, CSV/JSON streaming (pure)
   loop.ts                    runSourceLoop (drift-free, never exits)
   health.ts                  computeHealth (pure)
-  server.ts                  Bun.serve: dashboard, /health, /ws
+  server.ts                  Bun.serve: dashboard, /health, /export, /ws
   coinalyze/client.ts        CoinalyzeClient (chunking, 429 Retry-After, 401)
   coinalyze/rate-limiter.ts  sliding window (40 calls / 60 s)
   funding/universe.ts        the ten venues and their rate periods

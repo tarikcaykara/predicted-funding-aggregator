@@ -24,7 +24,12 @@ try {
 
 let store: SnapshotStore;
 try {
-  store = new SnapshotStore({ file: config.dataFile, historyFile: config.historyFile, historyLimit: HISTORY_LIMIT });
+  store = new SnapshotStore({
+    file: config.dataFile,
+    historyFile: config.historyFile,
+    historyLimit: HISTORY_LIMIT,
+    historyRetentionMs: config.historyRetentionDays === undefined ? undefined : config.historyRetentionDays * 86_400_000,
+  });
 } catch (e) {
   log.error(`cannot open HISTORY_FILE ${config.historyFile}: ${errorMessage(e)}`);
   process.exit(1);

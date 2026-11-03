@@ -109,3 +109,41 @@ test("/health returns the computed status code and body", async () => {
   health = { httpStatus: 200, body: { ...health.body, status: "ok", consecutive_failures: 0 } };
   expect((await fetch(`http://127.0.0.1:${server.port}/health`)).status).toBe(200);
 });
+
+const exportUrl = (query: string) => `http://127.0.0.1:${server.port}/export?${query}`;
+const bearer = (token: string) => ({ headers: { Authorization: `Bearer ${token}` } });
+
+test("/export needs the token in an Authorization: Bearer header", async () => {
+  for (const init of [{}, bearer("secret-tokeN"), { headers: { Authorization: "secret-token" } }]) {
+    const res = await fetch(exportUrl("symbol=ETH"), init);
+    expect(res.status).toBe(401);
+    expect(res.headers.get("www-authenticate")).toBe("Bearer");
+  }
+  // A token in the URL would end up in access logs and browser history.
+  expect((await fetch(exportUrl("symbol=ETH&token=secret-token"))).status).toBe(401);
+});
+
+test("/export returns one coin's stored points in [from, to) as CSV or JSON", async () => {
+  const points = [{ ...snap(1000), oi_weighted_predicted_funding_rate: null }, snap(2000), snap(3000)];
+  await store.add(points);
+
+  const csv = await fetch(exportUrl("symbol=eth&from=1000&to=3000"), bearer("secret-token"));
+  expect(csv.status).toBe(200);
+  expect(csv.headers.get("content-type")).toBe("text/csv; charset=utf-8");
+  expect(csv.headers.get("cache-control")).toBe("no-store");
+  expect(await csv.text()).toBe(
+    "timestamp,time,symbol,aggregated_predicted_funding_rate,oi_weighted_predicted_funding_rate,markets\n" +
+      "1000,1970-01-01T00:00:01.000Z,ETH,0.01,,7\n" +
+      "2000,1970-01-01T00:00:02.000Z,ETH,0.01,0.012,7\n",
+  );
+
+  const json = await fetch(exportUrl("symbol=ETH&from=1000&to=3000&format=json"), bearer("secret-token"));
+  expect(json.headers.get("content-type")).toBe("application/json");
+  expect(await json.json()).toEqual(points.slice(0, 2).map(({ components: _, ...point }) => point));
+});
+
+test("/export answers an invalid query with 400 and the reason", async () => {
+  const res = await fetch(exportUrl("symbol=DOGE"), bearer("secret-token"));
+  expect(res.status).toBe(400);
+  expect(await res.json()).toEqual({ error: 'unknown symbol "DOGE" (supported: BTC, ETH, SOL)' });
+});

@@ -2,7 +2,7 @@
 
 ## What this project is
 
-A Bun + TypeScript service that publishes the **aggregated predicted funding rate** (BTC, ETH, SOL; % per 8h) over an authenticated WebSocket, with a live dashboard and `/health`.
+A Bun + TypeScript service that publishes the **aggregated predicted funding rate** (BTC, ETH, SOL; % per 8h) over an authenticated WebSocket, with a live dashboard, `/health` and an authenticated CSV/JSON export of the archived history.
 
 - **Data:** only the official Coinalyze REST API. The API has no aggregated endpoint, so `FundingSource` aggregates the ten venues coinalyze.net lists on each coin's funding page. It computes a simple AVG and an OI-weighted average, both normalized to 8h, and publishes a per-venue breakdown.
 - **The chart is not in the runtime.** `scripts/calibrate/` is an offline dev tool. It reads the coinalyze.net chart and per-venue table with headless Chromium to verify the venue list and 8h factors, and to measure how the API aggregate tracks the chart.
@@ -14,13 +14,13 @@ Primary consumers are internal services that need a stable, explainable funding-
 ```
 FundingSource ─(INTERVAL_MS)→ runSourceLoop → SnapshotStore ─┬→ funding_rate.json (latest per coin, DATA_FILE)
                                    │                         ├→ WS channel "funding-rate" → dashboard / clients
-                                   │                         └→ history (HISTORY_LIMIT points per coin, in memory + HISTORY_FILE SQLite)
+                                   │                         └→ history (HISTORY_LIMIT points per coin in memory; every point in HISTORY_FILE SQLite → GET /export)
                                    └→ SourceStatus → GET /health
 ```
 
 Runtime modes:
 
-- **`bun run start`**: the service. Serves the dashboard (`GET /`), `/health` and `/ws`.
+- **`bun run start`**: the service. Serves the dashboard (`GET /`), `/health`, `/export` and `/ws`.
 - **`bun run calibrate`**: the offline calibration tool. Needs `bunx playwright install chromium`; dev dependencies only.
 
 ## Module map
@@ -31,12 +31,13 @@ Runtime modes:
 | `src/config.ts` | `loadConfig(env)` → `Config`; throws `ConfigError`. |
 | `src/coins.ts` | `COIN_REGISTRY` (symbol → Coinalyze slug), `chartUrl`. |
 | `src/types.ts` | `Snapshot` (wire = store = file format), `MarketComponent`, `HistoryPoint`, `Source`, `SourceStatus`. |
-| `src/protocol.ts` | WS `ClientMessage`/`ServerMessage`, `CLOSE` codes, `CHANNEL`, `HISTORY_LIMIT`. Shared by `server.ts` and `web/app.ts`. |
+| `src/protocol.ts` | WS `ClientMessage`/`ServerMessage`, `CLOSE` codes, `CHANNEL`, `HISTORY_LIMIT` (points per coin in memory, in the WS `history` message and on the dashboard). Shared by `server.ts` and `web/app.ts`. |
 | `src/log.ts` | `createLogger(scope)`: writes to **stderr only** (stdout is reserved for the calibration report). |
-| `src/store.ts` | `SnapshotStore`: latest per coin (persisted to `DATA_FILE`), history of `HistoryPoint`s (persisted to `HISTORY_FILE` via `bun:sqlite`, one transaction per `add`, pruned to `historyLimit` per coin; `load()` seeds history from the DB only, never from the JSON), subscribers. `load()` validates every component; `add` notifies subscribers before writing SQLite and `DATA_FILE` (temp file + rename), so a persistence error fails the cycle without starving WS clients. The constructor opens the DB and throws on a bad file; `main.ts` exits 1. |
+| `src/store.ts` | `SnapshotStore`: latest per coin (persisted to `DATA_FILE`), history of `HistoryPoint`s (persisted to `HISTORY_FILE` via `bun:sqlite`, one transaction per `add`; every point is kept unless `historyRetentionMs` is set, which deletes a coin's points older than that before its newest point; `load()` seeds history from the DB only, never from the JSON, reading just the newest `historyLimit` rows per coin), `range()` (one coin's points in `[from, to)`, keyset pages of 1000 rows, each its own query), subscribers. `load()` validates every component; `add` notifies subscribers before writing SQLite and `DATA_FILE` (temp file + rename), so a persistence error fails the cycle without starving WS clients. The constructor opens the DB and throws on a bad file; `main.ts` exits 1. |
+| `src/export.ts` | Pure: `parseExportQuery` (`symbol`, `from`/`to` in epoch ms, `format` `csv`/`json`) and `exportBody` (a pull-based `ReadableStream` over `range()` pages). |
 | `src/loop.ts` | `runSourceLoop`: drift-free (start-to-start), first poll immediate, never throws/exits; `abortableSleep`. |
 | `src/health.ts` | `computeHealth` (pure): ok if a poll succeeded within 3 intervals (or startup grace), else 503. |
-| `src/server.ts` | `createServer`: `Bun.serve` routes + WS protocol; client messages capped at 16 KiB; dev server only when `development` (from `NODE_ENV=development`). |
+| `src/server.ts` | `createServer`: `Bun.serve` routes + WS protocol; client messages capped at 16 KiB; `GET /export` checks `Authorization: Bearer` with the same constant-time comparison as WS auth before parsing the query; dev server only when `development` (from `NODE_ENV=development`). |
 | `src/coinalyze/client.ts` | `CoinalyzeClient`: `api_key` header, ≤20 symbols per request, every attempt goes through the limiter, 429 `Retry-After` (3 attempts, each wait logged as WARN, the rejected call refunded to the limiter), 401 fails immediately; includes 1-minute history for calibration. |
 | `src/coinalyze/rate-limiter.ts` | Sliding window like the server's: 40 calls per 60 s, each call held 60 s + 250 ms margin; `acquire()` returns a refund for rejected requests. |
 | `src/funding/universe.ts` | **`VENUES`**: the ten venues (page label, exchange code, quote, `ratePeriodHours`). The single source of methodology truth, together with `STALE_AFTER_MS` (defined in `source.ts`). |
@@ -63,13 +64,14 @@ Bun auto-loads `.env`. Do NOT use `dotenv`. All parsing happens in `src/config.t
 | `COINS` | `BTC,ETH,SOL` | Must be keys of `COIN_REGISTRY` |
 | `INTERVAL_MS` | `60000` | 3 coins × 10 venues at 60 s ≈ 33 of 40 calls/min |
 | `DATA_FILE` | `./funding_rate.json` | The Docker image and compose set `/app/data/funding_rate.json` (compose mounts the `data` volume there) |
-| `HISTORY_FILE` | `./history.sqlite` | Chart history DB. The Docker image and compose set `/app/data/history.sqlite` (same volume) |
+| `HISTORY_FILE` | `./history.sqlite` | History archive DB. The Docker image and compose set `/app/data/history.sqlite` (same volume) |
+| `HISTORY_RETENTION_DAYS` | unset | Unset or blank keeps every point. Otherwise 1–36500: deletes a coin's points older than that many days before its newest point |
 | `PING_INTERVAL_MS` | `30000` | |
 | `PONG_TIMEOUT_MS` | `65000` | Must be greater than `PING_INTERVAL_MS` |
 | `AUTH_TIMEOUT_MS` | `10000` | |
 | `NODE_ENV` | unset | `development` serves the dashboard through Bun's dev server (HMR, error overlay); any other value serves the production bundle. The Docker image sets `production` |
 
-## WebSocket contract
+## WebSocket and export contract
 
 - Endpoint `ws://<host>:<PORT>/ws`. Types live in `src/protocol.ts`; change them there and both ends follow.
 - The client sends `{"type":"auth","token"}` within `AUTH_TIMEOUT_MS`. The server replies `{"type":"auth","status":"ok",coins,interval_ms}` and then `{"type":"history",points,latest}`.
@@ -77,6 +79,7 @@ Bun auto-loads `.env`. Do NOT use `dotenv`. All parsing happens in `src/config.t
 - Keepalive: server `{"type":"ping"}` → client `{"type":"pong"}`.
 - Close codes: `4001` invalid token, `4002` pong timeout, `4003` auth timeout. A client message over 16 KiB closes the connection unparsed with 1009.
 - `Snapshot` keeps the v1 fields `aggregated_predicted_funding_rate`, `coin` (slug) and `timestamp`. Changing those names breaks v1 consumers.
+- `GET /export?symbol=&from=&to=&format=csv|json` needs `Authorization: Bearer <AUTH_TOKEN>`, otherwise `401` with `WWW-Authenticate: Bearer`. The token is never accepted in the URL. CSV columns: `timestamp,time,symbol,aggregated_predicted_funding_rate,oi_weighted_predicted_funding_rate,markets`; JSON is an array of `HistoryPoint`s. Adding a CSV column at the end is safe; renaming or reordering breaks consumers.
 
 ## Non-obvious gotchas (read before changing methodology or the calibration tool)
 
@@ -86,8 +89,9 @@ Bun auto-loads `.env`. Do NOT use `dotenv`. All parsing happens in `src/config.t
 2. **Rate periods are measured.** Hyperliquid (`H`) and Kraken (`K`) report hourly rates (page ÷ API ≈ 8). Deribit, Huobi and OKX have no predicted rate in the API: they are omitted from the response rather than returned as `null`, and show as `no_rate`. Re-run the calibration if Coinalyze changes units.
 3. **API budget: 40 calls/min per key, 1 call per symbol, counted over a sliding 60 s window.** Do not run the calibration tool and the service with the same key at the same time; together they exceed the budget and both get 429s. Two consecutive 30+-call cycles never fit in one window, so each cycle's first request waits for the previous cycle's first request to leave it: polls settle at about `INTERVAL_MS` + 250 ms, and that wait is by design (a 429 is not). Cold start costs only predicted rates plus spare-budget OI, so the first publish arrives in seconds; OI-weighted stays null for ~3–4 cycles unless seeded from `DATA_FILE`.
 4. **API keys activate 2 minutes after generation**, and generating a new key deactivates the old one immediately. A fresh key returning 401 is expected for those 2 minutes.
-5. **Loops never exit.** `runSourceLoop` catches everything and retries next cycle. Never add `process.exit` outside `main.ts` startup/shutdown.
-6. **Calibration tool (`scripts/calibrate/`):**
+5. **`HISTORY_FILE` is the only copy of the aggregate.** Coinalyze has no aggregate endpoint and keeps only 1500–2000 points of each intraday series, so a deleted point cannot be rebuilt from the API. Never prune it by count again (before v4.1 it kept `HISTORY_LIMIT` points), and keep `load()` reading only the newest `historyLimit` rows per coin, or startup time grows with the archive.
+6. **Loops never exit.** `runSourceLoop` catches everything and retries next cycle. Never add `process.exit` outside `main.ts` startup/shutdown.
+7. **Calibration tool (`scripts/calibrate/`):**
    - **Stealth plugin is load-bearing.** Headless Chromium is challenged by Cloudflare unless `puppeteer-extra-plugin-stealth` is active (`browser.ts`). Don't "simplify" the `playwright-extra` wrapper.
    - **Blob iframe.** TradingView renders into a `blob:https://coinalyze.net…` iframe; enumerate `page.frames()` and filter with `isChartFrame`.
    - **Interval dropdown.** `#header-toolbar-intervals button` is labelled with the current interval; pick `[data-value="1"]`. The legend value depends on the interval (1h ≠ 1m), so re-select after every reload.
@@ -146,11 +150,13 @@ v4.0.1 (tagged `v4.0.1` on the #35 squash commit):
 - **PR #34 (`0a2c629`):** CI runs `bun audit --audit-level=high` after install, so a high or critical advisory anywhere in `bun.lock` fails the build.
 - **PR #35:** `.dockerignore` became an allowlist. It came out of a git-history secret scan (gitleaks plus a custom blob scan over every public ref, including `refs/pull/*`: clean) and a security review of the v4.0 changes (no findings), during which a local build copied untracked root files into `/app`.
 
+v4.1 (PR #36, tagged `v4.1.0`): the history archive and export, after a review of [`crypto-data-manager`](https://github.com/azanbroib-hash/crypto-data-manager) (a GPL-3.0 tool that keeps Coinalyze and Binance history in SQLite because Coinalyze deletes intraday data after 1500–2000 points; ideas taken, no code). `HISTORY_FILE` keeps every point (optional `HISTORY_RETENTION_DAYS`) instead of pruning to `HISTORY_LIMIT`, `load()` reads only the newest `HISTORY_LIMIT` rows per coin, and `GET /export` streams one coin's points as CSV or JSON behind a Bearer token. Running v4.0.x on a v4.1 `HISTORY_FILE` prunes it back to 720 points per coin on the first poll.
+
 Headed mode, a separate server file, the live chart source, the `--once` mode (`bun run once`, removed in v3.0), `SOURCES`/`API_INTERVAL_MS`/`CHART_INTERVAL_MS` and "all STABLE perps" scope are historical.
 
 ## Working conventions for this repo
 
-- **Modular TypeScript under `src/`.** One responsibility per module (see the module map). Keep pure logic (`aggregate`, `parse`, `health`, `config`) free of I/O so it stays unit-testable.
+- **Modular TypeScript under `src/`.** One responsibility per module (see the module map). Keep pure logic (`aggregate`, `parse`, `health`, `config`, `export`) free of I/O so it stays unit-testable.
 - **Explicit `.ts` import extensions** (`allowImportingTsExtensions`, `verbatimModuleSyntax`). Use `import type` for type-only imports.
 - **Checks:** `bun test` and `bun run typecheck` must pass; CI runs both, after `bun audit --audit-level=high`. Tests must not reach the external network or launch a browser; loopback servers on port 0 and child processes of `src/main.ts` are fine. Inject fakes (`fetch`, `sleep`, `now`, `launch`) or point `COINALYZE_BASE_URL` at `test/fake-coinalyze.ts`.
 - **Test-first, at the lowest layer that proves the behaviour.** For a bug, first add a test that fails on the current code and run it red, then fix. For a feature, write the test of the new behaviour before the code. Pure logic gets a unit test; protocol, persistence and client behaviour get an integration test in the existing suites (`server.test.ts`, `store.test.ts`, `client.test.ts`); `test/e2e.test.ts` changes only when startup, the WS contract, persistence across restarts or the dashboard route change. Behaviour that exists only in the dashboard's DOM or canvas has no test suite: check it in a browser against the service and `test/fake-coinalyze.ts`, and describe the check in the PR.

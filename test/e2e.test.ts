@@ -182,6 +182,10 @@ test(
     expect(latest.timestamp).toBeGreaterThan(first.timestamp);
     expect(latest.oi_weighted_predicted_funding_rate!).toBeCloseTo(RATE_8H, 12);
     expect(fake.requests.slice(before)).toContain("/v1/open-interest");
+    // The export reads the same archive from HISTORY_FILE.
+    const csv = await fetch(`http://127.0.0.1:${env2.PORT}/export?symbol=BTC`, { headers: { Authorization: `Bearer ${TOKEN}` } });
+    const rows = (await csv.text()).trim().split("\n").slice(1);
+    expect(rows.map((row) => Number(row.split(",")[0]))).toEqual(timestamps);
     client.ws.close();
 
     run2.proc.kill("SIGTERM");

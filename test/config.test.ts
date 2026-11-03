@@ -68,4 +68,17 @@ describe("loadConfig", () => {
     expect(loadConfig({ ...base, NODE_ENV: "production" }).development).toBe(false);
     expect(loadConfig({ ...base, NODE_ENV: "development" }).development).toBe(true);
   });
+
+  test("HISTORY_RETENTION_DAYS is optional: unset or blank keeps every history point", () => {
+    expect(loadConfig(base).historyRetentionDays).toBeUndefined();
+    expect(loadConfig({ ...base, HISTORY_RETENTION_DAYS: " " }).historyRetentionDays).toBeUndefined();
+    expect(loadConfig({ ...base, HISTORY_RETENTION_DAYS: "30" }).historyRetentionDays).toBe(30);
+    expect(loadConfig({ ...base, HISTORY_RETENTION_DAYS: "36500" }).historyRetentionDays).toBe(36500);
+  });
+
+  test.each(["0", "1.5", "abc", "36501"])("rejects HISTORY_RETENTION_DAYS=%p", (raw) => {
+    expect(() => loadConfig({ ...base, HISTORY_RETENTION_DAYS: raw })).toThrow(
+      `Invalid HISTORY_RETENTION_DAYS: "${raw}" (whole number 1–36500)`,
+    );
+  });
 });
