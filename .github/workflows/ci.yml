@@ -20,5 +20,6 @@ jobs:
         with:
           bun-version: 1.4.4 # bumped by hand with the Dockerfile image and @types/bun (CLAUDE.md, Dependencies)
       - run: bun install --frozen-lockfile
+      - run: bun audit --audit-level=high # transitive packages included; the dependency graph does not read bun.lock (CLAUDE.md, Dependencies)
       - run: bun run typecheck
       - run: bun test

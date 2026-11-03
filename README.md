@@ -249,7 +249,7 @@ bun test            # unit, integration and e2e tests; loopback only, no externa
 bun run typecheck   # tsc --noEmit (strict)
 ```
 
-Dependabot opens weekly update PRs for the Bun packages and the GitHub Actions. The Bun runtime (`Dockerfile`, CI `bun-version`, `@types/bun`) is bumped by hand, all together; see "Dependencies" in [`CLAUDE.md`](CLAUDE.md).
+Dependabot opens weekly update PRs for the Bun packages and the GitHub Actions. The Bun runtime (`Dockerfile`, CI `bun-version`, `@types/bun`) is bumped by hand, all together; see "Dependencies" in [`CLAUDE.md`](CLAUDE.md). CI also runs `bun audit --audit-level=high`, which fails on a high or critical advisory in any package in `bun.lock`, transitive ones included.
 
 ```
 src/
