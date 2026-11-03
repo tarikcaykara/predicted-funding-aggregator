@@ -1,17 +1,9 @@
-node_modules
-.git
-.github
-.gitignore
-.dockerignore
-.env
-.env.*
-.cursor
-.idea
-funding_rate.json
-history.sqlite*
-*.md
-docs
-test
-.DS_Store
-scripts
-design
+# Allowlist: only what the service needs at runtime enters the build context.
+# A new runtime file or directory must be added here (CLAUDE.md, module map).
+*
+!package.json
+!bun.lock
+!tsconfig.json
+!LICENSE
+!src
+!web

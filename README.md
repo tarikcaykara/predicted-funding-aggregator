@@ -146,7 +146,7 @@ docker compose up --build -d
 docker compose ps       # "healthy" after the first check
 ```
 
-- **Image:** about 260 MB. Based on the pinned `oven/bun:1.4.4-debian`, runs as the non-root `bun` user, which can write only `/app/data` (the application code is root-owned), with a `HEALTHCHECK` on `/health`.
+- **Image:** about 260 MB. Based on the pinned `oven/bun:1.4.4-debian`, runs as the non-root `bun` user, which can write only `/app/data` (the application code is root-owned), with a `HEALTHCHECK` on `/health`. `.dockerignore` is an allowlist: only `package.json`, `bun.lock`, `tsconfig.json`, `LICENSE`, `src/` and `web/` enter the image, so untracked files in the checkout stay out of it.
 - **Persistence:** the image sets `DATA_FILE=/app/data/funding_rate.json` and `HISTORY_FILE=/app/data/history.sqlite`; compose sets the same paths (they override the `./` paths in a copied `.env`) and mounts the named volume `data` there, so the latest snapshots and the chart history survive container re-creation.
 - **Shutdown:** SIGTERM triggers a graceful shutdown.
 
