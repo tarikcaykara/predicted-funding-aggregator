@@ -17,7 +17,8 @@ const isHistoryPoint = (value: unknown): value is HistoryPoint => {
     isCoinSymbol(s.symbol) &&
     Number.isFinite(s.timestamp) &&
     Number.isFinite(s.aggregated_predicted_funding_rate) &&
-    (s.open_interest_usd === undefined || isNullableNumber(s.open_interest_usd))
+    (s.open_interest_usd === undefined || isNullableNumber(s.open_interest_usd)) &&
+    (s.source === undefined || s.source === "backfill")
   );
 };
 
@@ -59,6 +60,7 @@ export class SnapshotStore {
   private readonly historyLimit: number;
   private readonly db: Database;
   private readonly appendHistory: (points: HistoryPoint[]) => void;
+  private readonly insertBackfill: (points: HistoryPoint[]) => void;
   private readonly latestByCoin = new Map<string, Snapshot>();
   private readonly historyByCoin = new Map<string, HistoryPoint[]>();
   private readonly subscribers: ((s: Snapshot) => void)[] = [];
@@ -94,6 +96,12 @@ export class SnapshotStore {
       // Measured from the coin's newest point, so a stopped service keeps its archive until it polls again.
       for (const [symbol, timestamp] of newest) prune.run({ symbol, cutoff: timestamp - retentionMs });
     });
+    const insertIfAbsent = this.db.query<never, { symbol: string; timestamp: number; point: string }>(
+      "INSERT OR IGNORE INTO history (symbol, timestamp, point) VALUES ($symbol, $timestamp, $point)",
+    );
+    this.insertBackfill = this.db.transaction((points: HistoryPoint[]) => {
+      for (const p of points) insertIfAbsent.run({ symbol: p.symbol, timestamp: p.timestamp, point: JSON.stringify(p) });
+    });
   }
 
   async load(): Promise<void> {
@@ -121,6 +129,21 @@ export class SnapshotStore {
     const tmp = `${this.file}.tmp`;
     await Bun.write(tmp, JSON.stringify(this.latest(), null, 2));
     await rename(tmp, this.file);
+  }
+
+  /**
+   * Rebuilt points for a gap: written to `historyFile` and merged into memory, never sent to subscribers.
+   * A point already stored at the same timestamp wins.
+   */
+  addBackfill(points: HistoryPoint[]): void {
+    this.insertBackfill(points);
+    for (const symbol of new Set(points.map((p) => p.symbol))) {
+      const current = this.historyByCoin.get(symbol) ?? [];
+      const taken = new Set(current.map((p) => p.timestamp));
+      const added = points.filter((p) => p.symbol === symbol && !taken.has(p.timestamp));
+      const merged = [...current, ...added].sort((a, b) => a.timestamp - b.timestamp);
+      this.historyByCoin.set(symbol, merged.slice(-this.historyLimit));
+    }
   }
 
   latest(): Snapshot[] {

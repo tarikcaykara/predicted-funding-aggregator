@@ -34,15 +34,19 @@ const point = (timestamp: number, oiWeighted: number | null, openInterest: numbe
 });
 
 test("the body joins pages, empty ones included, into one CSV or one JSON array", async () => {
-  const points = [point(1000, null, null), point(2000, 0.012, 12_345_678_901.5), point(3000, -0.5, 1e9)];
+  const points = [
+    point(1000, null, null),
+    { ...point(2000, 0.012, 12_345_678_901.5), source: "backfill" as const },
+    point(3000, -0.5, 1e9),
+  ];
   const pages = () => [[points[0]!], [], [points[1]!, points[2]!], []].values();
 
   expect(await new Response(exportBody(pages(), "json")).json()).toEqual(points);
   expect(await new Response(exportBody(pages(), "csv")).text()).toBe(
-    "timestamp,time,symbol,aggregated_predicted_funding_rate,oi_weighted_predicted_funding_rate,markets,open_interest_usd\n" +
-      "1000,1970-01-01T00:00:01.000Z,ETH,0.01,,7,\n" +
-      "2000,1970-01-01T00:00:02.000Z,ETH,0.01,0.012,7,12345678901.5\n" +
-      "3000,1970-01-01T00:00:03.000Z,ETH,0.01,-0.5,7,1000000000\n",
+    "timestamp,time,symbol,aggregated_predicted_funding_rate,oi_weighted_predicted_funding_rate,markets,open_interest_usd,source\n" +
+      "1000,1970-01-01T00:00:01.000Z,ETH,0.01,,7,,live\n" +
+      "2000,1970-01-01T00:00:02.000Z,ETH,0.01,0.012,7,12345678901.5,backfill\n" +
+      "3000,1970-01-01T00:00:03.000Z,ETH,0.01,-0.5,7,1000000000,live\n",
   );
   expect(await new Response(exportBody([].values(), "json")).json()).toEqual([]);
 });

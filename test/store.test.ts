@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SnapshotStore } from "../src/store.ts";
 import type { CoinSymbol } from "../src/coins.ts";
-import type { Snapshot } from "../src/types.ts";
+import type { HistoryPoint, Snapshot } from "../src/types.ts";
 
 let dir: string;
 let file: string;
@@ -163,4 +163,25 @@ test("range() reads one coin's points with from ≤ timestamp < to from the DB, 
   expect(read(0, Number.MAX_SAFE_INTEGER)).toEqual([1, 3, 5, 7, 9]);
   expect(read(3, 9)).toEqual([3, 5, 7]);
   expect(read(10, 20)).toEqual([]);
+});
+
+test("addBackfill stores rebuilt points between live ones without notifying subscribers; a live point at the same timestamp wins", async () => {
+  const store = new SnapshotStore({ file, historyFile, historyLimit: 3 });
+  const received: number[] = [];
+  store.subscribe((s) => received.push(s.timestamp));
+  await store.add([snap("ETH", 1)]);
+  await store.add([snap("ETH", 10)]);
+  const { components: _, ...live } = snap("ETH", 10);
+  const rebuilt = (timestamp: number) => ({ ...live, timestamp, aggregated_predicted_funding_rate: 0.5, source: "backfill" as const });
+  store.addBackfill([rebuilt(4), rebuilt(7), rebuilt(10)]);
+
+  const describe = (points: HistoryPoint[]) => points.map((p) => `${p.timestamp}:${p.source ?? "live"}`);
+  expect(received).toEqual([1, 10]);
+  // Memory keeps the newest 3; the DB keeps all four.
+  expect(describe(store.history())).toEqual(["4:backfill", "7:backfill", "10:live"]);
+  expect(describe([...store.range("ETH", 0, 100)].flat())).toEqual(["1:live", "4:backfill", "7:backfill", "10:live"]);
+
+  const reloaded = new SnapshotStore({ file, historyFile, historyLimit: 10 });
+  await reloaded.load();
+  expect(describe(reloaded.history())).toEqual(["1:live", "4:backfill", "7:backfill", "10:live"]);
 });
