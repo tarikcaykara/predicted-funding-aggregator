@@ -146,7 +146,7 @@ docker compose up --build -d
 docker compose ps       # "healthy" after the first check
 ```
 
-- **Image:** about 240 MB. Based on the pinned `oven/bun:1.4.3-debian`, runs as the non-root `bun` user, which can write only `/app/data` (the application code is root-owned), with a `HEALTHCHECK` on `/health`.
+- **Image:** about 260 MB. Based on the pinned `oven/bun:1.4.4-debian`, runs as the non-root `bun` user, which can write only `/app/data` (the application code is root-owned), with a `HEALTHCHECK` on `/health`.
 - **Persistence:** the image sets `DATA_FILE=/app/data/funding_rate.json` and `HISTORY_FILE=/app/data/history.sqlite`; compose sets the same paths (they override the `./` paths in a copied `.env`) and mounts the named volume `data` there, so the latest snapshots and the chart history survive container re-creation.
 - **Shutdown:** SIGTERM triggers a graceful shutdown.
 
@@ -224,7 +224,7 @@ A `HistoryPoint` is a `Snapshot` without `components`.
 | `4001` | invalid token (the server sends `{"type":"auth","status":"error","message":"invalid token"}` first) |
 | `4002` | pong timeout |
 | `4003` | no auth message within `AUTH_TIMEOUT_MS` |
-| `1009` | a client message larger than 16 KiB, sent unparsed. On Linux (including the Docker image) Bun drops the connection without a close frame, so clients see `1006` |
+| `1009` | a client message larger than 16 KiB, sent unparsed |
 
 **Migrating from v1:**
 - `aggregated_predicted_funding_rate`, `coin` and `timestamp` keep their names.
