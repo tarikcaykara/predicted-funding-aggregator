@@ -14,7 +14,7 @@ export interface ExportQuery {
 
 const SUPPORTED = Object.keys(COIN_REGISTRY).join(", ");
 const CSV_HEADER =
-  "timestamp,time,symbol,aggregated_predicted_funding_rate,oi_weighted_predicted_funding_rate,markets\n";
+  "timestamp,time,symbol,aggregated_predicted_funding_rate,oi_weighted_predicted_funding_rate,markets,open_interest_usd\n";
 
 const epochMs = (params: URLSearchParams, name: "from" | "to", fallback: number): number | { error: string } => {
   const raw = params.get(name);
@@ -43,7 +43,7 @@ export const parseExportQuery = (params: URLSearchParams): ExportQuery | { error
 
 const csvRow = (p: HistoryPoint): string =>
   `${p.timestamp},${new Date(p.timestamp).toISOString()},${p.symbol},${p.aggregated_predicted_funding_rate},` +
-  `${p.oi_weighted_predicted_funding_rate ?? ""},${p.markets}\n`;
+  `${p.oi_weighted_predicted_funding_rate ?? ""},${p.markets},${p.open_interest_usd ?? ""}\n`;
 
 /** Streams pages of points as one CSV document or one JSON array, pulling a page only when the client reads. */
 export const exportBody = (pages: Iterator<HistoryPoint[]>, format: ExportFormat): ReadableStream<Uint8Array> => {

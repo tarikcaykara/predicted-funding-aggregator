@@ -10,6 +10,7 @@ const snapshot: Snapshot = {
   aggregated_predicted_funding_rate: 0.01,
   oi_weighted_predicted_funding_rate: null,
   markets: 3,
+  open_interest_usd: null,
   unit: "percent_per_8h",
   components: [],
 };

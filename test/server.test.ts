@@ -19,6 +19,7 @@ const snap = (timestamp: number): Snapshot => ({
   aggregated_predicted_funding_rate: 0.01,
   oi_weighted_predicted_funding_rate: 0.012,
   markets: 7,
+  open_interest_usd: 2_500_000_000,
   unit: "percent_per_8h",
   components: [],
 });
@@ -124,7 +125,7 @@ test("/export needs the token in an Authorization: Bearer header", async () => {
 });
 
 test("/export returns one coin's stored points in [from, to) as CSV or JSON", async () => {
-  const points = [{ ...snap(1000), oi_weighted_predicted_funding_rate: null }, snap(2000), snap(3000)];
+  const points = [{ ...snap(1000), oi_weighted_predicted_funding_rate: null, open_interest_usd: null }, snap(2000), snap(3000)];
   await store.add(points);
 
   const csv = await fetch(exportUrl("symbol=eth&from=1000&to=3000"), bearer("secret-token"));
@@ -132,9 +133,9 @@ test("/export returns one coin's stored points in [from, to) as CSV or JSON", as
   expect(csv.headers.get("content-type")).toBe("text/csv; charset=utf-8");
   expect(csv.headers.get("cache-control")).toBe("no-store");
   expect(await csv.text()).toBe(
-    "timestamp,time,symbol,aggregated_predicted_funding_rate,oi_weighted_predicted_funding_rate,markets\n" +
-      "1000,1970-01-01T00:00:01.000Z,ETH,0.01,,7\n" +
-      "2000,1970-01-01T00:00:02.000Z,ETH,0.01,0.012,7\n",
+    "timestamp,time,symbol,aggregated_predicted_funding_rate,oi_weighted_predicted_funding_rate,markets,open_interest_usd\n" +
+      "1000,1970-01-01T00:00:01.000Z,ETH,0.01,,7,\n" +
+      "2000,1970-01-01T00:00:02.000Z,ETH,0.01,0.012,7,2500000000\n",
   );
 
   const json = await fetch(exportUrl("symbol=ETH&from=1000&to=3000&format=json"), bearer("secret-token"));

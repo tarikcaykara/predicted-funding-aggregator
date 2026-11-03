@@ -72,6 +72,9 @@ test("aggregates fresh venue rates only, normalized to 8h, with a per-venue brea
   expect(eth!.aggregated_predicted_funding_rate).toBeCloseTo(0.015, 12);
   expect(eth!.oi_weighted_predicted_funding_rate).toBeCloseTo(0.0175, 12);
   expect(eth!.markets).toBe(2);
+  // Every listed venue counts, whatever its rate status: Binance 300, Hyperliquid 100, stale Kraken 1e12,
+  // and Deribit, whose OI the API omits, as 0.
+  expect(eth!.open_interest_usd).toBe(1e12 + 400);
 
   const byVenue = Object.fromEntries(eth!.components.map((c) => [c.venue, c]));
   expect(byVenue["BINANCE USDT"]!.status).toBe("used");
@@ -110,11 +113,13 @@ test("open interest is refreshed a few markets per cycle, oldest first; OI-weigh
   expect(calls.oiBatches).toEqual([["ETHUSDT_PERP.A", "ETH_USDC-PERPETUAL.2"]]);
   expect(first!.aggregated_predicted_funding_rate).toBeCloseTo(0.015, 12);
   expect(first!.oi_weighted_predicted_funding_rate).toBeNull();
+  expect(first!.open_interest_usd).toBeNull();
 
   clock.now += 60000;
   const [second] = await source.poll();
   expect(calls.oiBatches[1]).toEqual(["ETH.H", "pf_ethusd.K"]);
   expect(second!.oi_weighted_predicted_funding_rate).toBeCloseTo(0.0175, 12);
+  expect(second!.open_interest_usd).toBe(1e12 + 400);
 
   clock.now += 60000;
   await source.poll();
@@ -136,6 +141,7 @@ test("an open-interest failure still publishes AVG with OI-weighted null", async
   const [eth] = await source.poll();
   expect(eth!.aggregated_predicted_funding_rate).toBeCloseTo(0.015, 12);
   expect(eth!.oi_weighted_predicted_funding_rate).toBeNull();
+  expect(eth!.open_interest_usd).toBeNull();
 });
 
 const seedSnapshot = (timestamp: number): Snapshot => ({
@@ -146,6 +152,7 @@ const seedSnapshot = (timestamp: number): Snapshot => ({
   aggregated_predicted_funding_rate: 0.015,
   oi_weighted_predicted_funding_rate: 0.0175,
   markets: 2,
+  open_interest_usd: 400,
   unit: "percent_per_8h",
   components: [
     ["BINANCE USDT", "ETHUSDT_PERP.A", 300],
@@ -169,6 +176,8 @@ test("seeded open interest gives OI-weighted on the first poll; seeds older than
   seeded.seedOpenInterest([seedSnapshot(T0 - 60_000)]);
   const [eth] = await seeded.poll();
   expect(eth!.oi_weighted_predicted_funding_rate).toBeCloseTo(0.0175, 12);
+  // The seed covers both used venues but not Kraken or Deribit, so the total waits for their first fetch.
+  expect(eth!.open_interest_usd).toBeNull();
   expect(calls.openInterest).toBe(0);
 
   const old = new FundingSource({ client, coins: ["ETH"], intervalMs: 60000, now: () => clock.now, openInterestPerCycle: 0 });
