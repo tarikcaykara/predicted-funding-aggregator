@@ -1,7 +1,7 @@
 import type { CoinSymbol } from "./coins.ts";
 import type { HistoryPoint, Snapshot } from "./types.ts";
 
-/** Points kept per coin, by the server and by the dashboard. */
+/** Points per coin kept in memory by the server, sent in the `history` message, and kept by the dashboard. */
 export const HISTORY_LIMIT = 720;
 
 export const CHANNEL = "funding-rate";

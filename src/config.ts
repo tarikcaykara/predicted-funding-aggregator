@@ -11,6 +11,8 @@ export interface Config {
   intervalMs: number;
   dataFile: string;
   historyFile: string;
+  /** `undefined` keeps every history point. */
+  historyRetentionDays: number | undefined;
   port: number;
   authToken: string;
   pingIntervalMs: number;
@@ -25,6 +27,7 @@ type Env = Record<string, string | undefined>;
 const MAX_TIMER_MS = 2_147_483_647;
 const MAX_PORT = 65_535;
 const MIN_AUTH_TOKEN_LENGTH = 32;
+const MAX_RETENTION_DAYS = 36_500;
 
 const positiveInt = (env: Env, name: string, fallback: number, max = MAX_TIMER_MS): number => {
   const raw = env[name];
@@ -81,6 +84,10 @@ export const loadConfig = (env: Env): Config => {
     intervalMs: positiveInt(env, "INTERVAL_MS", 60000),
     dataFile: env.DATA_FILE?.trim() || "./funding_rate.json",
     historyFile: env.HISTORY_FILE?.trim() || "./history.sqlite",
+    // Blank counts as unset, so the `.env.example` line `HISTORY_RETENTION_DAYS=` keeps every point.
+    historyRetentionDays: env.HISTORY_RETENTION_DAYS?.trim()
+      ? positiveInt(env, "HISTORY_RETENTION_DAYS", 0, MAX_RETENTION_DAYS)
+      : undefined,
     port: positiveInt(env, "PORT", 3000, MAX_PORT),
     authToken: authToken(env),
     pingIntervalMs: positiveInt(env, "PING_INTERVAL_MS", 30000),

@@ -105,7 +105,7 @@ test("a DATA_FILE write failure still publishes to subscribers and rejects add()
   expect(store.history().map((p) => p.timestamp)).toEqual([1]);
 });
 
-test("history survives a restart, capped per coin in memory and on disk", async () => {
+test("history survives a restart: memory keeps the newest points per coin, the DB keeps every point", async () => {
   const before = new SnapshotStore({ file, historyFile, historyLimit: 2 });
   await before.add([snap("ETH", 1), snap("ETH", 3), snap("BTC", 2)]);
   await before.add([snap("ETH", 5)]);
@@ -118,6 +118,31 @@ test("history survives a restart, capped per coin in memory and on disk", async 
   expect(after.latest()).toEqual(before.latest());
 
   const db = new Database(historyFile, { readonly: true });
-  expect(db.query("SELECT COUNT(*) AS n FROM history WHERE symbol = 'ETH'").get()).toEqual({ n: 2 });
+  expect(db.query("SELECT COUNT(*) AS n FROM history WHERE symbol = 'ETH'").get()).toEqual({ n: 3 });
   db.close();
+});
+
+test("retention deletes a coin's points older than the window before its newest point", async () => {
+  const store = new SnapshotStore({ file, historyFile, historyLimit: 10, historyRetentionMs: 100 });
+  await store.add([snap("ETH", 1), snap("BTC", 1)]);
+  await store.add([snap("ETH", 101)]);
+  const timestamps = (symbol: CoinSymbol) => [...store.range(symbol, 0, Number.MAX_SAFE_INTEGER)].flat().map((p) => p.timestamp);
+  // Exactly one window old is kept.
+  expect(timestamps("ETH")).toEqual([1, 101]);
+
+  await store.add([snap("ETH", 150)]);
+  expect(timestamps("ETH")).toEqual([101, 150]);
+  // A coin without a new point keeps its old points.
+  expect(timestamps("BTC")).toEqual([1]);
+});
+
+test("range() reads one coin's points with from ≤ timestamp < to from the DB, ascending, across pages", async () => {
+  const store = new SnapshotStore({ file, historyFile, historyLimit: 1 });
+  await store.add([snap("ETH", 1), snap("BTC", 2)]);
+  for (const t of [3, 5, 7, 9]) await store.add([snap("ETH", t)]);
+
+  const read = (from: number, to: number) => [...store.range("ETH", from, to, 2)].flat().map((p) => p.timestamp);
+  expect(read(0, Number.MAX_SAFE_INTEGER)).toEqual([1, 3, 5, 7, 9]);
+  expect(read(3, 9)).toEqual([3, 5, 7]);
+  expect(read(10, 20)).toEqual([]);
 });

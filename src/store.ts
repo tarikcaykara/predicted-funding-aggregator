@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { rename } from "node:fs/promises";
-import { isCoinSymbol } from "./coins.ts";
+import { COIN_REGISTRY, isCoinSymbol, type CoinSymbol } from "./coins.ts";
 import { createLogger } from "./log.ts";
 import type { ComponentStatus, HistoryPoint, MarketComponent, Snapshot } from "./types.ts";
 
@@ -42,7 +42,11 @@ const isSnapshot = (value: unknown): value is Snapshot => {
   return Array.isArray(components) && components.every(isComponent);
 };
 
-/** Latest snapshot per coin (persisted to `file`) plus a bounded history of aggregate points (persisted to `historyFile`). */
+/**
+ * Latest snapshot per coin (persisted to `file`) plus the history of aggregate points: every point in
+ * `historyFile` (or those within `historyRetentionMs` of a coin's newest point), the newest `historyLimit`
+ * per coin in memory.
+ */
 export class SnapshotStore {
   private readonly file: string;
   private readonly historyFile: string;
@@ -54,7 +58,7 @@ export class SnapshotStore {
   private readonly subscribers: ((s: Snapshot) => void)[] = [];
 
   /** Throws if `historyFile` cannot be opened or created as a SQLite database. */
-  constructor(opts: { file: string; historyFile: string; historyLimit: number }) {
+  constructor(opts: { file: string; historyFile: string; historyLimit: number; historyRetentionMs?: number }) {
     this.file = opts.file;
     this.historyFile = opts.historyFile;
     this.historyLimit = opts.historyLimit;
@@ -70,15 +74,19 @@ export class SnapshotStore {
     const insert = this.db.query<never, { symbol: string; timestamp: number; point: string }>(
       "INSERT OR REPLACE INTO history (symbol, timestamp, point) VALUES ($symbol, $timestamp, $point)",
     );
-    // Keeps the newest `limit` rows of a coin; with ≤ limit rows the subquery is NULL and nothing is deleted.
-    const prune = this.db.query<never, { symbol: string; limit: number }>(
-      `DELETE FROM history WHERE symbol = $symbol AND timestamp <= (
-        SELECT timestamp FROM history WHERE symbol = $symbol ORDER BY timestamp DESC LIMIT 1 OFFSET $limit
-      )`,
+    const prune = this.db.query<never, { symbol: string; cutoff: number }>(
+      "DELETE FROM history WHERE symbol = $symbol AND timestamp < $cutoff",
     );
+    const retentionMs = opts.historyRetentionMs;
     this.appendHistory = this.db.transaction((points: HistoryPoint[]) => {
-      for (const p of points) insert.run({ symbol: p.symbol, timestamp: p.timestamp, point: JSON.stringify(p) });
-      for (const symbol of new Set(points.map((p) => p.symbol))) prune.run({ symbol, limit: this.historyLimit });
+      const newest = new Map<string, number>();
+      for (const p of points) {
+        insert.run({ symbol: p.symbol, timestamp: p.timestamp, point: JSON.stringify(p) });
+        newest.set(p.symbol, Math.max(newest.get(p.symbol) ?? p.timestamp, p.timestamp));
+      }
+      if (retentionMs === undefined) return;
+      // Measured from the coin's newest point, so a stopped service keeps its archive until it polls again.
+      for (const [symbol, timestamp] of newest) prune.run({ symbol, cutoff: timestamp - retentionMs });
     });
   }
 
@@ -118,6 +126,25 @@ export class SnapshotStore {
     return [...this.historyByCoin.values()].flat().sort((a, b) => a.timestamp - b.timestamp);
   }
 
+  /**
+   * One coin's points with `from` ≤ timestamp < `to` from `historyFile`, ascending, `pageSize` rows per
+   * query. Each page is a separate query, so writes between pages are safe.
+   */
+  *range(symbol: CoinSymbol, from: number, to: number, pageSize = 1000): Generator<HistoryPoint[]> {
+    const page = this.db.query<{ timestamp: number; point: string }, { symbol: string; from: number; to: number; limit: number }>(
+      `SELECT timestamp, point FROM history
+       WHERE symbol = $symbol AND timestamp >= $from AND timestamp < $to
+       ORDER BY timestamp LIMIT $limit`,
+    );
+    for (let start = from; ; ) {
+      const rows = page.all({ symbol, from: start, to, limit: pageSize });
+      if (rows.length === 0) return;
+      yield this.parsePoints(rows).points;
+      if (rows.length < pageSize) return;
+      start = rows.at(-1)!.timestamp + 1;
+    }
+  }
+
   subscribe(fn: (s: Snapshot) => void): void {
     this.subscribers.push(fn);
   }
@@ -141,20 +168,32 @@ export class SnapshotStore {
     }
   }
 
+  /** Reads only the newest `historyLimit` rows per coin, so startup cost does not grow with the archive. */
   private loadHistory(): void {
+    const newest = this.db.query<{ timestamp: number; point: string }, { symbol: string; limit: number }>(
+      "SELECT timestamp, point FROM history WHERE symbol = $symbol ORDER BY timestamp DESC LIMIT $limit",
+    );
     let skipped = 0;
-    // Ascending, so the in-memory cap keeps the newest `historyLimit` points per coin.
-    for (const row of this.db.query<{ point: string }, []>("SELECT point FROM history ORDER BY timestamp").all()) {
+    for (const symbol of Object.keys(COIN_REGISTRY)) {
+      const parsed = this.parsePoints(newest.all({ symbol, limit: this.historyLimit }).reverse());
+      for (const point of parsed.points) this.pushHistory(point);
+      skipped += parsed.skipped;
+    }
+    if (skipped > 0) log.warn(`skipped ${skipped} unreadable history rows in ${this.historyFile}`);
+  }
+
+  private parsePoints(rows: { point: string }[]): { points: HistoryPoint[]; skipped: number } {
+    const points: HistoryPoint[] = [];
+    for (const row of rows) {
       let point: unknown;
       try {
         point = JSON.parse(row.point);
       } catch {
         point = undefined;
       }
-      if (isHistoryPoint(point)) this.pushHistory(point);
-      else skipped++;
+      if (isHistoryPoint(point)) points.push(point);
     }
-    if (skipped > 0) log.warn(`skipped ${skipped} unreadable history rows in ${this.historyFile}`);
+    return { points, skipped: rows.length - points.length };
   }
 
   private pushHistory(point: HistoryPoint): void {

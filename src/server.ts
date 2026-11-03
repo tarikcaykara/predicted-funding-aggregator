@@ -1,6 +1,7 @@
 import type { HTMLBundle, ServerWebSocket } from "bun";
 import { timingSafeEqual } from "node:crypto";
 import type { CoinSymbol } from "./coins.ts";
+import { exportBody, parseExportQuery } from "./export.ts";
 import type { Health } from "./health.ts";
 import { createLogger } from "./log.ts";
 import { CHANNEL, CLOSE, type ServerMessage } from "./protocol.ts";
@@ -23,7 +24,7 @@ export interface ServerOptions {
   pingIntervalMs: number;
   pongTimeoutMs: number;
   development: boolean;
-  store: Pick<SnapshotStore, "history" | "latest" | "subscribe">;
+  store: Pick<SnapshotStore, "history" | "latest" | "range" | "subscribe">;
   getHealth: () => Health;
   meta: { coins: CoinSymbol[]; intervalMs: number };
   dashboard: HTMLBundle | Response;
@@ -41,6 +42,9 @@ const tokenMatches = (candidate: unknown, expected: string): boolean => {
   return a.length === b.length && timingSafeEqual(a, b);
 };
 
+const bearerToken = (req: Request): string | undefined =>
+  /^Bearer\s+(\S+)$/i.exec(req.headers.get("authorization") ?? "")?.[1];
+
 export const createServer = (opts: ServerOptions): AppServer => {
   const clients = new Set<ServerWebSocket<ClientData>>();
   const send = (ws: ServerWebSocket<ClientData>, msg: ServerMessage) => ws.send(JSON.stringify(msg));
@@ -53,6 +57,24 @@ export const createServer = (opts: ServerOptions): AppServer => {
       "/health": () => {
         const h = opts.getHealth();
         return Response.json(h.body, { status: h.httpStatus });
+      },
+      "/export": {
+        GET: (req) => {
+          if (!tokenMatches(bearerToken(req), opts.authToken)) {
+            log.warn("export: request rejected (invalid token)");
+            return Response.json({ error: "invalid or missing token" }, { status: 401, headers: { "WWW-Authenticate": "Bearer" } });
+          }
+          const query = parseExportQuery(new URL(req.url).searchParams);
+          if ("error" in query) return Response.json(query, { status: 400 });
+          const csv = query.format === "csv";
+          return new Response(exportBody(opts.store.range(query.symbol, query.from, query.to), query.format), {
+            headers: {
+              "Content-Type": csv ? "text/csv; charset=utf-8" : "application/json",
+              "Cache-Control": "no-store",
+              ...(csv && { "Content-Disposition": `attachment; filename="${query.symbol}-predicted-funding.csv"` }),
+            },
+          });
+        },
       },
     },
     fetch(req, server) {
