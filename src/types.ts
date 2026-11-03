@@ -31,6 +31,11 @@ export interface Snapshot {
   oi_weighted_predicted_funding_rate: number | null;
   /** Number of `used` components. */
   markets: number;
+  /**
+   * Sum of `oi_usd` over the listed components (every status but `unlisted`); a market whose OI the API
+   * omits counts as 0. `null` until every listed market's OI has been fetched once.
+   */
+  open_interest_usd: number | null;
   unit: "percent_per_8h";
   components: MarketComponent[];
 }

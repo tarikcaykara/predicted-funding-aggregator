@@ -29,6 +29,7 @@ const snap = (symbol: CoinSymbol, timestamp: number, rate = 0.01): Snapshot => (
   aggregated_predicted_funding_rate: rate,
   oi_weighted_predicted_funding_rate: null,
   markets: 1,
+  open_interest_usd: null,
   unit: "percent_per_8h",
   components: [
     {
@@ -91,6 +92,23 @@ test("load() skips snapshots whose components are malformed", async () => {
   const store = new SnapshotStore({ file, historyFile, historyLimit: 10 });
   await store.load();
   expect(store.latest()).toEqual([snap("BTC", 1)]);
+});
+
+test("snapshots and points written before open_interest_usd existed load with it as null", async () => {
+  const { open_interest_usd: _, ...old } = snap("ETH", 1);
+  const { components: __, ...oldPoint } = old;
+  await Bun.write(file, JSON.stringify([old]));
+  const db = new Database(historyFile, { create: true });
+  db.run("CREATE TABLE history (symbol TEXT NOT NULL, timestamp INTEGER NOT NULL, point TEXT NOT NULL, PRIMARY KEY (symbol, timestamp)) WITHOUT ROWID");
+  db.run("INSERT INTO history VALUES ('ETH', 1, ?)", [JSON.stringify(oldPoint)]);
+  db.close();
+
+  const store = new SnapshotStore({ file, historyFile, historyLimit: 10 });
+  await store.load();
+  expect(store.latest()).toEqual([snap("ETH", 1)]);
+  const { components: ___, ...point } = snap("ETH", 1);
+  expect(store.history()).toEqual([point]);
+  expect([...store.range("ETH", 0, 2)].flat()).toEqual([point]);
 });
 
 test("a DATA_FILE write failure still publishes to subscribers and rejects add()", async () => {

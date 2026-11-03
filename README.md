@@ -80,6 +80,8 @@ $$\text{AVG} = \frac{1}{n}\sum_{i=1}^{n} r_i \qquad\qquad \text{OI-weighted} = \
 
 The OI-weighted average only counts venues that also have a positive open interest. It is `null` until open interest has been fetched for every used venue (about 3–4 minutes after a cold start without a recent `funding_rate.json`), and is never computed over a partially fetched set.
 
+**Open interest.** `open_interest_usd` is the total open interest in USD of every listed venue: `used`, `stale` and `no_rate` alike, because a stale or missing predicted rate says nothing about a venue's size. A market whose OI the API omits counts as 0. The total is `null` until every listed market's OI has been fetched once, and, like each venue's `oi_usd`, it is refreshed on the rolling 10-minute schedule. It is not the OI-weighted denominator, which sums only the `used` venues.
+
 ## Calibration
 
 The coinalyze.net chart is the reference for both the venue list and the 8h factors. `bun run calibrate` is an offline tool, not part of the service. It drives a headless Chromium (Playwright with `puppeteer-extra-plugin-stealth`) and, once a minute, reads three things:
@@ -199,22 +201,23 @@ A `Snapshot`, which is also the element type of the `funding_rate.json` array (`
 ```json
 {
   "type": "snapshot",
-  "symbol": "ETH",
-  "coin": "ethereum",
-  "timestamp": 1792092779396,
-  "aggregated_predicted_funding_rate": 0.006532189523809485,
-  "oi_weighted_predicted_funding_rate": 0.008911031122840309,
+  "symbol": "BTC",
+  "coin": "bitcoin",
+  "timestamp": 1793715538161,
+  "aggregated_predicted_funding_rate": 0.009612242857142855,
+  "oi_weighted_predicted_funding_rate": 0.009830999157123849,
   "markets": 7,
+  "open_interest_usd": 22256316220.77746,
   "unit": "percent_per_8h",
   "components": [
     {
       "venue": "HYPERLIQUID",
-      "symbol": "ETH.H",
+      "symbol": "BTC.H",
       "predicted_rate": 0.00125,
       "rate_period_hours": 1,
       "rate_8h": 0.01,
-      "oi_usd": 2605596912.2449627,
-      "updated_at": 1792092778452,
+      "oi_usd": 3128090562.549,
+      "updated_at": 1793715537989,
       "status": "used"
     }
   ]
@@ -262,11 +265,12 @@ curl -H "Authorization: Bearer $AUTH_TOKEN" "http://localhost:3000/export?symbol
 | `format` | `csv` | `csv` or `json` |
 
 ```csv
-timestamp,time,symbol,aggregated_predicted_funding_rate,oi_weighted_predicted_funding_rate,markets
-1793715070637,2026-11-03T14:11:10.637Z,BTC,0.008745357142857143,,7
+timestamp,time,symbol,aggregated_predicted_funding_rate,oi_weighted_predicted_funding_rate,markets,open_interest_usd
+1793715477914,2026-11-03T14:17:57.914Z,BTC,0.008608514285714287,,7,
+1793715538161,2026-11-03T14:18:58.161Z,BTC,0.009612242857142855,0.009830999157123849,7,22256316220.77746
 ```
 
-- Rates are % per 8h, at full precision. An empty `oi_weighted_predicted_funding_rate` means OI-weighted was not available for that point, as in this first poll after a cold start. `time` is the UTC form of `timestamp`.
+- Rates are % per 8h, at full precision; `open_interest_usd` is in USD (see [Methodology](#methodology)). Empty fields mean the value was not available yet, as in the first poll after this cold start. Points archived before v4.2 have an empty `open_interest_usd`. `time` is the UTC form of `timestamp`.
 - A missing or wrong token returns `401` with `WWW-Authenticate: Bearer`. An invalid parameter returns `400` with `{"error": "…"}`.
 - The response is streamed 1000 rows at a time, so a long range does not build up in memory, and polling continues while it is read.
 

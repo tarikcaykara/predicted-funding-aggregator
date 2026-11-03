@@ -6,6 +6,8 @@ import type { ComponentStatus, HistoryPoint, MarketComponent, Snapshot } from ".
 
 const log = createLogger("store");
 
+const isNullableNumber = (v: unknown) => v === null || Number.isFinite(v);
+
 const isHistoryPoint = (value: unknown): value is HistoryPoint => {
   if (typeof value !== "object" || value === null) return false;
   const s = value as Record<string, unknown>;
@@ -14,12 +16,16 @@ const isHistoryPoint = (value: unknown): value is HistoryPoint => {
     typeof s.symbol === "string" &&
     isCoinSymbol(s.symbol) &&
     Number.isFinite(s.timestamp) &&
-    Number.isFinite(s.aggregated_predicted_funding_rate)
+    Number.isFinite(s.aggregated_predicted_funding_rate) &&
+    (s.open_interest_usd === undefined || isNullableNumber(s.open_interest_usd))
   );
 };
 
+/** Snapshots and points written before v4.2 have no `open_interest_usd`. */
+const withOpenInterest = <T extends HistoryPoint>(p: T): T =>
+  (p as Partial<HistoryPoint>).open_interest_usd === undefined ? { ...p, open_interest_usd: null } : p;
+
 const COMPONENT_STATUSES: ReadonlySet<ComponentStatus> = new Set(["used", "stale", "no_rate", "unlisted"]);
-const isNullableNumber = (v: unknown) => v === null || Number.isFinite(v);
 
 const isComponent = (value: unknown): value is MarketComponent => {
   if (typeof value !== "object" || value === null) return false;
@@ -164,7 +170,7 @@ export class SnapshotStore {
       return;
     }
     for (const entry of parsed) {
-      if (isSnapshot(entry)) this.latestByCoin.set(entry.symbol, entry);
+      if (isSnapshot(entry)) this.latestByCoin.set(entry.symbol, withOpenInterest(entry));
     }
   }
 
@@ -191,7 +197,7 @@ export class SnapshotStore {
       } catch {
         point = undefined;
       }
-      if (isHistoryPoint(point)) points.push(point);
+      if (isHistoryPoint(point)) points.push(withOpenInterest(point));
     }
     return { points, skipped: rows.length - points.length };
   }

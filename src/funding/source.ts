@@ -71,6 +71,8 @@ export class FundingSource implements Source {
       const used = components.filter((c) => c.status === "used");
       const result = aggregate(used.map((c) => ({ rate: c.rate_8h, oiUsd: c.oi_usd })));
       const oiComplete = used.every((c) => c.symbol !== null && this.oiCache.has(c.symbol));
+      const listed = components.filter((c) => c.symbol !== null);
+      const oiTotalComplete = listed.every((c) => this.oiCache.has(c.symbol!));
       if (result.avg === null) {
         log.warn(`${coin}: no venue has a fresh predicted rate`);
         continue;
@@ -83,6 +85,7 @@ export class FundingSource implements Source {
         aggregated_predicted_funding_rate: result.avg,
         oi_weighted_predicted_funding_rate: oiComplete ? result.oiWeighted : null,
         markets: result.count,
+        open_interest_usd: oiTotalComplete ? listed.reduce((sum, c) => sum + (c.oi_usd ?? 0), 0) : null,
         unit: "percent_per_8h",
         components,
       });
