@@ -1,4 +1,4 @@
-FROM oven/bun:1.4.3-debian
+FROM oven/bun:1.4.4-debian
 ENV NODE_ENV=production \
     DATA_FILE=/app/data/funding_rate.json \
     HISTORY_FILE=/app/data/history.sqlite

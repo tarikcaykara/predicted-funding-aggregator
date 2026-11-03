@@ -96,8 +96,7 @@ test("a message of 16 KiB is parsed; one byte more closes the connection unparse
   const overCap = connect();
   await overCap.opened;
   overCap.ws.send("x".repeat(16 * 1024 + 1));
-  // Bun sends a 1009 close frame on macOS but drops the connection without one on Linux (1006).
-  expect([1006, 1009]).toContain((await overCap.closed).code);
+  expect((await overCap.closed).code).toBe(1009);
   // An already-queued reply would win the race; none means the frame was never parsed.
   expect(await Promise.race([overCap.next(), Promise.resolve("no reply")])).toBe("no reply");
 });
