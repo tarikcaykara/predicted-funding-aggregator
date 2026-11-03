@@ -40,8 +40,11 @@ export interface Snapshot {
   components: MarketComponent[];
 }
 
-/** A snapshot without its per-market breakdown, as kept in history. */
-export type HistoryPoint = Omit<Snapshot, "components">;
+/**
+ * A snapshot without its per-market breakdown, as kept in history. Points rebuilt from Coinalyze's 1-minute
+ * history after a gap carry `source: "backfill"`; live points have no `source`.
+ */
+export type HistoryPoint = Omit<Snapshot, "components"> & { source?: "backfill" };
 
 export interface Source {
   readonly name: string;

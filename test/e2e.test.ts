@@ -1,11 +1,12 @@
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { HealthBody } from "../src/health.ts";
 import type { ServerMessage } from "../src/protocol.ts";
 import type { Snapshot } from "../src/types.ts";
-import { FAKE_API_KEY, RATE_8H, startFakeCoinalyze, type FakeCoinalyze } from "./fake-coinalyze.ts";
+import { FAKE_API_KEY, OI_USD, RATE_8H, startFakeCoinalyze, type FakeCoinalyze } from "./fake-coinalyze.ts";
 import { connectWs } from "./ws-client.ts";
 
 // src/main.ts runs as a child process against a loopback fake of the Coinalyze API.
@@ -190,6 +191,47 @@ test(
 
     run2.proc.kill("SIGTERM");
     expect(await run2.proc.exited).toBe(0);
+  },
+  30_000,
+);
+
+test(
+  "after a gap, the first poll is followed by a backfill of the missing minutes from the 1-minute history",
+  async () => {
+    const dir = await mkdtemp(join(root, "backfill-"));
+    const env = serviceEnv(dir);
+    // The archive's newest point is 10 minutes old, as after a downtime.
+    const gapStart = Date.now() - 10 * 60_000;
+    const db = new Database(env.HISTORY_FILE!, { create: true });
+    db.run("CREATE TABLE history (symbol TEXT NOT NULL, timestamp INTEGER NOT NULL, point TEXT NOT NULL, PRIMARY KEY (symbol, timestamp)) WITHOUT ROWID");
+    const old = { type: "snapshot", symbol: "BTC", coin: "bitcoin", timestamp: gapStart, aggregated_predicted_funding_rate: RATE_8H, oi_weighted_predicted_funding_rate: RATE_8H, markets: 7, open_interest_usd: 10 * OI_USD, unit: "percent_per_8h" };
+    db.run("INSERT INTO history VALUES ('BTC', ?, ?)", [gapStart, JSON.stringify(old)]);
+    db.close();
+    const before = fake.requests.length;
+
+    const run = start(dir, env);
+    // The cycle, backfill included, completes before /health reports the poll.
+    await waitForPoll(env.PORT!);
+    const { client, history } = await authenticate(env.PORT!);
+    const points = history.points;
+    expect(points[0]!.timestamp).toBe(gapStart);
+    expect(points.at(-1)!.source).toBeUndefined();
+    const rebuilt = points.slice(1, -1);
+    expect(rebuilt.length).toBeGreaterThanOrEqual(9);
+    for (const p of rebuilt) {
+      expect(p).toMatchObject({ source: "backfill", markets: 7, open_interest_usd: 10 * OI_USD });
+      expect(p.aggregated_predicted_funding_rate).toBeCloseTo(RATE_8H, 12);
+      expect(p.oi_weighted_predicted_funding_rate!).toBeCloseTo(RATE_8H, 12);
+    }
+    const steps = points.slice(1).map((p, i) => p.timestamp - points[i]!.timestamp);
+    expect(Math.max(...steps)).toBeLessThanOrEqual(60_000);
+    expect(fake.requests.slice(before)).toEqual(
+      expect.arrayContaining(["/v1/predicted-funding-rate-history", "/v1/open-interest-history"]),
+    );
+    client.ws.close();
+
+    run.proc.kill("SIGTERM");
+    expect(await run.proc.exited).toBe(0);
   },
   30_000,
 );

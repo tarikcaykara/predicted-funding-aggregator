@@ -36,6 +36,8 @@ flowchart LR
   WS --> DASH["Dashboard GET /"]
   WS --> CLIENTS[Your services]
   EXPORT --> CLIENTS
+  API -. "once, after a restart with a gap" .-> BF["Backfill<br/>1-minute history"]
+  BF --> DB
   subgraph offline ["Offline: bun run calibrate"]
     CAL["chart legend + page table + API history<br/>→ calibration report"]
   end
@@ -43,8 +45,9 @@ flowchart LR
 
 - **One loop.** Intervals are measured start-to-start and the first poll runs immediately. A failed cycle is logged, counted in `/health` and retried on the next cycle; the loop never exits the process.
 - **API budget.** Each symbol in a request costs one call, the limit is 40 calls per sliding 60 s window, and a request takes at most 20 symbols. Predicted rates are fetched first every cycle. Open interest is refreshed on a rolling basis: a market is refetched once its value is 10 min old, oldest first, a few markets per cycle using the spare budget. Defaults (3 coins × 10 venues at 60 s) still come to about 33 calls/min, with no 10-minute burst. A client-side sliding window mirrors the server's, so the client waits instead of being rejected. Two consecutive cycles never fit in one window, so each cycle's first request waits for the previous cycle's first request to leave it, and polls settle at about `INTERVAL_MS` + 250 ms. A 429 (for example from another process using the same key) is retried after `Retry-After` and logged as a warning.
+- **Backfill budget.** After a restart with a gap, the one-off backfill costs one call per market reporting a rate plus one per listed market: 51 for the defaults. In a real-API run, the second poll came 3 minutes after the first instead of 1, and polls were back to 60 s after that. The rebuilt range runs into that pause, so the chart has no hole there: the largest step between points was 144 s.
 - **Caching.** The market list is cached for 24 h; open interest uses a per-market rolling refresh.
-- **Persistence.** The latest snapshot per coin is written to `funding_rate.json`, so a restart serves data immediately. On restart, open interest is also seeded from that file if it is at most 30 min old, so OI-weighted is available from the first poll. Every point is written to the SQLite file `history.sqlite` in one transaction per cycle and kept, unless `HISTORY_RETENTION_DAYS` is set. The dashboard chart and the WebSocket `history` message use the last 720 points per coin (about 12 h at 60 s), so the chart survives a restart. After a downtime the chart shows the points before it, a gap, then the new points. `funding_rate.json` is replaced atomically (temp file + rename). If a write fails, live clients still get the snapshot, and the cycle counts as failed in `/health`.
+- **Persistence.** The latest snapshot per coin is written to `funding_rate.json`, so a restart serves data immediately. On restart, open interest is also seeded from that file if it is at most 30 min old, so OI-weighted is available from the first poll. Every point is written to the SQLite file `history.sqlite` in one transaction per cycle and kept, unless `HISTORY_RETENTION_DAYS` is set. The dashboard chart and the WebSocket `history` message use the last 720 points per coin (about 12 h at 60 s), so the chart survives a restart. After a restart with a gap, the last 24 h of the gap are rebuilt from Coinalyze's 1-minute history ([Backfill](#methodology)); anything older stays a gap. `funding_rate.json` is replaced atomically (temp file + rename). If a write fails, live clients still get the snapshot, and the cycle counts as failed in `/health`.
 - **Archive.** The archive is the only copy of the aggregate. Coinalyze has no aggregate endpoint and keeps only the last 1500–2000 points of each intraday series ([API docs](https://api.coinalyze.net/v1/doc/)), so lost points cannot be fetched again. Three coins at 60 s add about 1 MB a day. [`GET /export`](#get-export) reads it.
 
 ## Methodology
@@ -81,6 +84,12 @@ $$\text{AVG} = \frac{1}{n}\sum_{i=1}^{n} r_i \qquad\qquad \text{OI-weighted} = \
 The OI-weighted average only counts venues that also have a positive open interest. It is `null` until open interest has been fetched for every used venue (about 3–4 minutes after a cold start without a recent `funding_rate.json`), and is never computed over a partially fetched set.
 
 **Open interest.** `open_interest_usd` is the total open interest in USD of every listed venue: `used`, `stale` and `no_rate` alike, because a stale or missing predicted rate says nothing about a venue's size. A market whose OI the API omits counts as 0. The total is `null` until every listed market's OI has been fetched once, and, like each venue's `oi_usd`, it is refreshed on the rolling 10-minute schedule. It is not the OI-weighted denominator, which sums only the `used` venues.
+
+**Backfill.** When the first successful poll after a start comes more than 3 intervals after a coin's newest archived point, the service rebuilds the gap from Coinalyze's 1-minute history (`/predicted-funding-rate-history`, `/open-interest-history`). This happens once per process; gaps from an outage while the service runs are not filled.
+- **Range:** points at whole minutes, `INTERVAL_MS` apart (rounded to minutes), from the gap start until the rate history arrived. At most the last 24 h are rebuilt, because Coinalyze keeps only 1500–2000 one-minute bars.
+- **Rules:** each point uses today's venue list and the live rules. A venue's rate is the close of its newest bar, used if that bar closed at most 15 minutes earlier (the staleness limit), and normalized to 8h. Its open interest is the close of its newest OI bar within 60 minutes, because sparse markets publish OI bars rarely (WOO X: up to 16 minutes apart). OI-weighted and the total OI follow the same completeness rules as a live poll.
+- **Marking:** rebuilt points carry `"source": "backfill"` in the archive, the WebSocket `history` message and `/export`.
+- **Accuracy:** rebuilt values are close to live ones but not identical. Against 21 live polls over 6 minutes (2026-11-03), the median relative difference was 0.16% for AVG, 0.10% for OI-weighted and 0.08% for the total OI. The largest AVG difference was 28%, on a single point.
 
 ## Calibration
 
@@ -224,7 +233,7 @@ A `Snapshot`, which is also the element type of the `funding_rate.json` array (`
 }
 ```
 
-A `HistoryPoint` is a `Snapshot` without `components`.
+A `HistoryPoint` is a `Snapshot` without `components`. Points rebuilt after a restart also carry `"source": "backfill"` (see [Methodology](#methodology)); live points have no `source`.
 
 | Close code | Meaning |
 |---|---|
@@ -265,12 +274,12 @@ curl -H "Authorization: Bearer $AUTH_TOKEN" "http://localhost:3000/export?symbol
 | `format` | `csv` | `csv` or `json` |
 
 ```csv
-timestamp,time,symbol,aggregated_predicted_funding_rate,oi_weighted_predicted_funding_rate,markets,open_interest_usd
-1793715477914,2026-11-03T14:17:57.914Z,BTC,0.008608514285714287,,7,
-1793715538161,2026-11-03T14:18:58.161Z,BTC,0.009612242857142855,0.009830999157123849,7,22256316220.77746
+timestamp,time,symbol,aggregated_predicted_funding_rate,oi_weighted_predicted_funding_rate,markets,open_interest_usd,source
+1793715477914,2026-11-03T14:17:57.914Z,BTC,0.008608514285714287,,7,,live
+1793715538161,2026-11-03T14:18:58.161Z,BTC,0.009612242857142855,0.009830999157123849,7,22256316220.77746,live
 ```
 
-- Rates are % per 8h, at full precision; `open_interest_usd` is in USD (see [Methodology](#methodology)). Empty fields mean the value was not available yet, as in the first poll after this cold start. Points archived before v4.2 have an empty `open_interest_usd`. `time` is the UTC form of `timestamp`.
+- Rates are % per 8h, at full precision; `open_interest_usd` is in USD (see [Methodology](#methodology)). Empty fields mean the value was not available yet, as in the first poll after this cold start. Points archived before v4.2 have an empty `open_interest_usd`. `source` is `live`, or `backfill` for a point rebuilt after a restart. `time` is the UTC form of `timestamp`.
 - A missing or wrong token returns `401` with `WWW-Authenticate: Bearer`. An invalid parameter returns `400` with `{"error": "…"}`.
 - The response is streamed 1000 rows at a time, so a long range does not build up in memory, and polling continues while it is read.
 
@@ -296,11 +305,12 @@ src/
   loop.ts                    runSourceLoop (drift-free, never exits)
   health.ts                  computeHealth (pure)
   server.ts                  Bun.serve: dashboard, /health, /export, /ws
-  coinalyze/client.ts        CoinalyzeClient (chunking, 429 Retry-After, 401)
+  coinalyze/client.ts        CoinalyzeClient (chunking, 429 Retry-After, 401, 1-minute history)
   coinalyze/rate-limiter.ts  sliding window (40 calls / 60 s)
   funding/universe.ts        the ten venues and their rate periods
   funding/aggregate.ts       AVG / OI-weighted (pure)
   funding/source.ts          FundingSource (venue resolution, rolling OI, staleness, components)
+  funding/backfill.ts        Backfill: rebuilds a restart gap from 1-minute history, once per process
 web/                         dashboard (Bun HTML import + lightweight-charts, JetBrains Mono + Space Grotesk fonts)
 design/handoff/              design exports: number-line/ (current), ledger/ (v3.1, archived); not shipped in the image
 scripts/calibrate/           offline calibration (Playwright; dev dependency)

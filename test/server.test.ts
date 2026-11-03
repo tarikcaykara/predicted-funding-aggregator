@@ -133,9 +133,9 @@ test("/export returns one coin's stored points in [from, to) as CSV or JSON", as
   expect(csv.headers.get("content-type")).toBe("text/csv; charset=utf-8");
   expect(csv.headers.get("cache-control")).toBe("no-store");
   expect(await csv.text()).toBe(
-    "timestamp,time,symbol,aggregated_predicted_funding_rate,oi_weighted_predicted_funding_rate,markets,open_interest_usd\n" +
-      "1000,1970-01-01T00:00:01.000Z,ETH,0.01,,7,\n" +
-      "2000,1970-01-01T00:00:02.000Z,ETH,0.01,0.012,7,2500000000\n",
+    "timestamp,time,symbol,aggregated_predicted_funding_rate,oi_weighted_predicted_funding_rate,markets,open_interest_usd,source\n" +
+      "1000,1970-01-01T00:00:01.000Z,ETH,0.01,,7,,live\n" +
+      "2000,1970-01-01T00:00:02.000Z,ETH,0.01,0.012,7,2500000000,live\n",
   );
 
   const json = await fetch(exportUrl("symbol=ETH&from=1000&to=3000&format=json"), bearer("secret-token"));

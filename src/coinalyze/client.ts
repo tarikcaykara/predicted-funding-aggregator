@@ -78,6 +78,16 @@ export class CoinalyzeClient {
     });
   }
 
+  /** 1-minute OHLC of open interest in USD; `from`/`to` are UNIX seconds (inclusive). */
+  openInterestUsdHistory(symbols: string[], from: number, to: number): Promise<CandleSeries[]> {
+    return this.perSymbol("/open-interest-history", symbols, {
+      interval: "1min",
+      from: String(from),
+      to: String(to),
+      convert_to_usd: "true",
+    });
+  }
+
   /** Each symbol costs one API call; at most 20 symbols fit in one request. */
   private async perSymbol<T>(path: string, symbols: string[], params: Record<string, string>): Promise<T[]> {
     const results: T[] = [];
