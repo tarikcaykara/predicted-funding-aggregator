@@ -24,7 +24,7 @@ export interface ServerOptions {
   pingIntervalMs: number;
   pongTimeoutMs: number;
   development: boolean;
-  store: Pick<SnapshotStore, "history" | "latest" | "range" | "subscribe">;
+  store: Pick<SnapshotStore, "history" | "latest" | "range" | "subscribe" | "subscribeBackfill">;
   getHealth: () => Health;
   meta: { coins: CoinSymbol[]; intervalMs: number };
   dashboard: HTMLBundle | Response;
@@ -144,6 +144,10 @@ export const createServer = (opts: ServerOptions): AppServer => {
   let stopped = false;
   opts.store.subscribe((s) => {
     if (!stopped) server.publish(CHANNEL, JSON.stringify(s));
+  });
+  // The channel holds only authenticated sockets; `clients` holds unauthenticated ones too.
+  opts.store.subscribeBackfill((points) => {
+    if (!stopped) server.publish(CHANNEL, JSON.stringify({ type: "backfill", points } satisfies ServerMessage));
   });
 
   return {

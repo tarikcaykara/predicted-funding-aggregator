@@ -64,6 +64,7 @@ export class SnapshotStore {
   private readonly latestByCoin = new Map<string, Snapshot>();
   private readonly historyByCoin = new Map<string, HistoryPoint[]>();
   private readonly subscribers: ((s: Snapshot) => void)[] = [];
+  private readonly backfillSubscribers: ((points: HistoryPoint[]) => void)[] = [];
 
   /** Throws if `historyFile` cannot be opened or created as a SQLite database. */
   constructor(opts: { file: string; historyFile: string; historyLimit: number; historyRetentionMs?: number }) {
@@ -132,18 +133,26 @@ export class SnapshotStore {
   }
 
   /**
-   * Rebuilt points for a gap: written to `historyFile` and merged into memory, never sent to subscribers.
-   * A point already stored at the same timestamp wins.
+   * Rebuilt points for a gap: written to `historyFile` and merged into memory. The ones memory keeps go to
+   * backfill subscribers, ascending, never to snapshot subscribers. A point already stored at the same
+   * timestamp wins.
    */
   addBackfill(points: HistoryPoint[]): void {
     this.insertBackfill(points);
+    const kept: HistoryPoint[] = [];
     for (const symbol of new Set(points.map((p) => p.symbol))) {
       const current = this.historyByCoin.get(symbol) ?? [];
       const taken = new Set(current.map((p) => p.timestamp));
       const added = points.filter((p) => p.symbol === symbol && !taken.has(p.timestamp));
       const merged = [...current, ...added].sort((a, b) => a.timestamp - b.timestamp);
-      this.historyByCoin.set(symbol, merged.slice(-this.historyLimit));
+      const memory = merged.slice(-this.historyLimit);
+      this.historyByCoin.set(symbol, memory);
+      const isAdded = new Set(added);
+      kept.push(...memory.filter((p) => isAdded.has(p)));
     }
+    if (kept.length === 0) return;
+    kept.sort((a, b) => a.timestamp - b.timestamp);
+    for (const fn of this.backfillSubscribers) fn(kept);
   }
 
   latest(): Snapshot[] {
@@ -176,6 +185,10 @@ export class SnapshotStore {
 
   subscribe(fn: (s: Snapshot) => void): void {
     this.subscribers.push(fn);
+  }
+
+  subscribeBackfill(fn: (points: HistoryPoint[]) => void): void {
+    this.backfillSubscribers.push(fn);
   }
 
   /** Seeds only `latest()`; history comes from `historyFile`, so it isn't duplicated on restart. */

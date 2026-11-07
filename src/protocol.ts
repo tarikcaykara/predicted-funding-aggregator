@@ -12,6 +12,12 @@ export type ServerMessage =
   | { type: "auth"; status: "ok"; coins: CoinSymbol[]; interval_ms: number }
   | { type: "auth"; status: "error"; message: string }
   | { type: "history"; points: HistoryPoint[]; latest: Snapshot[] }
+  /**
+   * Points rebuilt after a restart (`source: "backfill"`): one message per backfilled coin, sent only to
+   * authenticated clients; merge them into the history by timestamp. Consumers that filter by `symbol`
+   * ignore it, because the message has no top-level `symbol`.
+   */
+  | { type: "backfill"; points: HistoryPoint[] }
   | { type: "ping" }
   | { type: "error"; message: "invalid json" | "unknown message type" }
   | Snapshot;
