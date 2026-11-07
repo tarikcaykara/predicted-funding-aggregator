@@ -47,6 +47,7 @@ const axisMin = $<HTMLElement>("[data-axis-min]");
 const axisMax = $<HTMLElement>("[data-axis-max]");
 const axisOi = $<HTMLElement>(".axis__oi");
 const dataAnnounce = $<HTMLElement>("#data-announce");
+const legendBackfill = $<HTMLElement>("#legend-backfill");
 
 let socket: WebSocket | null = null;
 let reconnectTimer: number | undefined;
@@ -86,6 +87,23 @@ const record = (point: HistoryPoint): boolean => {
   if (list.length <= HISTORY_LIMIT) return false;
   list.splice(0, list.length - HISTORY_LIMIT);
   return true;
+};
+
+/** Merges points rebuilt after a restart into their coins' histories: ascending, the newest HISTORY_LIMIT kept. */
+const mergeBackfill = (points: HistoryPoint[]): void => {
+  const touched = new Set<CoinSymbol>();
+  for (const p of points) {
+    const list = history.get(p.symbol) ?? [];
+    list.push(p);
+    history.set(p.symbol, list);
+    touched.add(p.symbol);
+  }
+  // No dedupe: the server sends only points absent from its memory, which this client mirrors.
+  for (const symbol of touched) {
+    const list = history.get(symbol)!;
+    list.sort((a, b) => a.timestamp - b.timestamp);
+    if (list.length > HISTORY_LIMIT) list.splice(0, list.length - HISTORY_LIMIT);
+  }
 };
 
 // ---- Formatting -----------------------------------------------------------
@@ -131,7 +149,7 @@ const renderHeadline = () => {
   }
   age.textContent = s ? formatAge(Date.now() - s.timestamp) : "—";
   if (!s) {
-    for (const id of ["m-avg", "m-oi", "m-sp"]) setMetric(id, "—", WAIT_DATA, "", true);
+    for (const id of ["m-avg", "m-oi", "m-sp", "m-toi"]) setMetric(id, "—", WAIT_DATA, "", true);
     setMetric("m-ven", "—", null, "", true);
     pips.replaceChildren(...VENUES.map(() => Object.assign(document.createElement("span"), { className: "pip" })));
     return;
@@ -146,6 +164,13 @@ const renderHeadline = () => {
     const sp = oi - avg;
     setMetric("m-oi", signed(oi, 5), `% per 8h · ${oi < 0 ? "negative" : "positive"}`, signClass(oi), false);
     setMetric("m-sp", signed(sp, 5), "pp · OI-weighted − AVG", signClass(sp), false);
+  }
+  const toi = s.open_interest_usd;
+  if (toi === null) {
+    setMetric("m-toi", "—", WAIT_OI, "", true);
+  } else {
+    const listed = s.components.filter((c) => c.status !== "unlisted").length;
+    setMetric("m-toi", usd(toi), `USD · ${listed} listed venues`, "", false);
   }
   setMetric("m-ven", `${s.markets} / ${s.components.length}`, null, "", false);
   pips.replaceChildren(...s.components.map((c) => Object.assign(document.createElement("span"), { className: c.status === "used" ? "pip pip--used" : "pip pip--excluded" })));
@@ -261,12 +286,17 @@ const priceFormat: PriceFormatCustom = { type: "custom", minMove: 0.00001, forma
 const lineWidth = (px("--chart-line-width") || 2) as LineWidth;
 const spreadPos = cssVar("--chart-spread-pos");
 const spreadNeg = cssVar("--chart-spread-neg");
+const avgBackfill = cssVar("--chart-avg-backfill");
+const oiBackfill = cssVar("--chart-oi-backfill");
+const spreadPosBackfill = cssVar("--chart-spread-pos-backfill");
+const spreadNegBackfill = cssVar("--chart-spread-neg-backfill");
+const isBackfill = (p: HistoryPoint) => p.source === "backfill";
 
 interface Track {
   series: ISeriesApi<"Line" | "Histogram">;
   pick: (p: HistoryPoint) => number | null;
-  /** Per-point colour (spread bars). */
-  tint?: (v: number) => string;
+  /** Per-point colour; `undefined` keeps the series colour. Rebuilt points get the muted `*-backfill` tokens. */
+  color: (p: HistoryPoint, value: number) => string | undefined;
   lastTime: number;
 }
 
@@ -274,17 +304,19 @@ const tracks: Track[] = [
   {
     series: chart.addSeries(LineSeries, { color: cssVar("--chart-avg"), lineWidth, priceFormat, priceLineVisible: false, title: "AVG" }),
     pick: (p) => p.aggregated_predicted_funding_rate,
+    color: (p) => (isBackfill(p) ? avgBackfill : undefined),
     lastTime: 0,
   },
   {
     series: chart.addSeries(LineSeries, { color: cssVar("--chart-oi"), lineWidth, priceFormat, priceLineVisible: false, title: "OI-w" }),
     pick: (p) => p.oi_weighted_predicted_funding_rate,
+    color: (p) => (isBackfill(p) ? oiBackfill : undefined),
     lastTime: 0,
   },
   {
     series: chart.addSeries(HistogramSeries, { priceFormat, priceLineVisible: false, title: "Spread" }, 1),
     pick: (p) => (p.oi_weighted_predicted_funding_rate === null ? null : p.oi_weighted_predicted_funding_rate - p.aggregated_predicted_funding_rate),
-    tint: (v) => (v < 0 ? spreadNeg : spreadPos),
+    color: (p, v) => (isBackfill(p) ? (v < 0 ? spreadNegBackfill : spreadPosBackfill) : v < 0 ? spreadNeg : spreadPos),
     lastTime: 0,
   },
 ];
@@ -293,13 +325,14 @@ chart.panes()[1]?.setHeight(px("--chart-spread-pane"));
 type ChartPoint = LineData<UTCTimestamp> | WhitespaceData<UTCTimestamp>;
 
 /**
- * One point per second (last value wins), ascending, as lightweight-charts requires. After any pause longer than
- * staleAfterMs() a whitespace point marks the gap on the index-based time scale, and the last valued point before it
- * is transparent: a line series skips whitespace and strokes segment i-1 → i in item i-1's colour, so that hides the
- * segment joining across the downtime. Gaps are detected from every point, including ones `pick` skips, so all
- * tracks break together.
+ * One point per second (last value wins), ascending, as lightweight-charts requires, each coloured by `track.color`.
+ * After any pause longer than staleAfterMs() a whitespace point marks the gap on the index-based time scale, and on
+ * a line series the last valued point before it is transparent: a line series skips whitespace and strokes segment
+ * i-1 → i in item i-1's colour, so that hides the segment joining across the downtime. Histogram bars before a gap
+ * keep their colour. Gaps are detected from every point, including ones `pick` skips, so all tracks break together.
  */
-const toPoints = (points: HistoryPoint[], pick: Track["pick"]): ChartPoint[] => {
+const toPoints = (points: HistoryPoint[], track: Track): ChartPoint[] => {
+  const line = track.series.seriesType() === "Line";
   const bySecond = new Map<number, ChartPoint>();
   let prev: number | undefined;
   let lastValued: LineData<UTCTimestamp> | undefined;
@@ -308,12 +341,13 @@ const toPoints = (points: HistoryPoint[], pick: Track["pick"]): ChartPoint[] => 
     if (prev !== undefined && p.timestamp - prev > staleAfterMs()) {
       const gap = (Math.floor(prev / 1000) + 1) as UTCTimestamp;
       if (gap < time) bySecond.set(gap, { time: gap });
-      if (lastValued !== undefined) lastValued.color = "transparent";
+      if (line && lastValued !== undefined) lastValued.color = "transparent";
     }
     prev = p.timestamp;
-    const value = pick(p);
+    const value = track.pick(p);
     if (value !== null) {
-      lastValued = { time, value };
+      const color = track.color(p, value);
+      lastValued = color === undefined ? { time, value } : { time, value, color };
       bySecond.set(time, lastValued);
     }
   }
@@ -323,11 +357,11 @@ const toPoints = (points: HistoryPoint[], pick: Track["pick"]): ChartPoint[] => 
 const rebuildChart = (fit = true) => {
   const points = history.get(selected) ?? [];
   for (const track of tracks) {
-    const data = toPoints(points, track.pick);
-    const { tint } = track;
-    track.series.setData(tint === undefined ? data : data.map((d) => ("value" in d ? { ...d, color: tint(d.value) } : d)));
+    const data = toPoints(points, track);
+    track.series.setData(data);
     track.lastTime = data.at(-1)?.time ?? 0;
   }
+  legendBackfill.hidden = !points.some(isBackfill);
   if (fit) chart.timeScale().fitContent();
 };
 
@@ -346,7 +380,8 @@ const pushPoint = (p: HistoryPoint, evicted: boolean) => {
     // update() rejects points older than the last one.
     if (value === null || time < track.lastTime) continue;
     const point = { time: time as UTCTimestamp, value };
-    track.series.update(track.tint === undefined ? point : { ...point, color: track.tint(value) });
+    const color = track.color(p, value);
+    track.series.update(color === undefined ? point : { ...point, color });
     track.lastTime = time;
   }
 };
@@ -421,6 +456,11 @@ const handle = (ws: WebSocket, msg: ServerMessage) => {
       for (const p of msg.points) record(p);
       for (const s of msg.latest) latest.set(s.symbol, s);
       select(selected);
+      return;
+    case "backfill":
+      mergeBackfill(msg.points);
+      // Fits the content: the gap's whitespace is gone, so the old logical range would show other times.
+      if (msg.points.some((p) => p.symbol === selected)) rebuildChart();
       return;
     case "ping":
       send(ws, { type: "pong" });
