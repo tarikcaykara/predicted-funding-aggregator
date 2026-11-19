@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import type { FutureMarket, ValuePoint } from "../src/coinalyze/client.ts";
-import { FundingSource, OI_REFRESH_MS, OI_SEED_MAX_AGE_MS, STALE_AFTER_MS } from "../src/funding/source.ts";
+import { FundingSource, OI_REFRESH_MS, OI_SEED_MAX_AGE_MS } from "../src/funding/source.ts";
+import { STALE_AFTER_MS } from "../src/funding/universe.ts";
 import type { Snapshot } from "../src/types.ts";
 
 const T0 = 1_800_000_000_000;

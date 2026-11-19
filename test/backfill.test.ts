@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import type { CandleSeries } from "../src/coinalyze/client.ts";
 import { Backfill, OI_HISTORY_MAX_AGE_MS, rebuildPoints, type Bar } from "../src/funding/backfill.ts";
-import { STALE_AFTER_MS } from "../src/funding/source.ts";
+import { STALE_AFTER_MS } from "../src/funding/universe.ts";
 import type { ComponentStatus, HistoryPoint, MarketComponent, Snapshot } from "../src/types.ts";
 
 const MIN = 60_000;

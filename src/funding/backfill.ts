@@ -4,7 +4,7 @@ import { createLogger, errorMessage } from "../log.ts";
 import type { SnapshotStore } from "../store.ts";
 import type { HistoryPoint, MarketComponent, Snapshot } from "../types.ts";
 import { aggregate } from "./aggregate.ts";
-import { STALE_AFTER_MS } from "./source.ts";
+import { STALE_AFTER_MS } from "./universe.ts";
 
 const log = createLogger("backfill");
 
