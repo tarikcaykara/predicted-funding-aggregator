@@ -72,6 +72,29 @@ test("valid auth receives metadata, history with the latest breakdown, then live
   await client.closed;
 });
 
+test("a backfill reaches authenticated clients as one backfill message; unauthenticated clients get nothing", async () => {
+  const authed = connect();
+  await authed.opened;
+  authed.ws.send(JSON.stringify({ type: "auth", token: "secret-token" }));
+  await authed.next();
+  await authed.next();
+  const pending = connect();
+  await pending.opened;
+  const unexpected: string[] = [];
+  pending.ws.addEventListener("message", (e) => unexpected.push(String(e.data)));
+
+  // Outside the [1000, 3000) range the /export test reads.
+  const { components: _, ...point } = snap(500);
+  const rebuilt = { ...point, source: "backfill" as const };
+  store.addBackfill([rebuilt]);
+
+  expect(await authed.next()).toEqual({ type: "backfill", points: [rebuilt] });
+  expect((await pending.closed).code).toBe(4003);
+  expect(unexpected).toEqual([]);
+  authed.ws.close();
+  await authed.closed;
+});
+
 test("a wrong token is closed with 4001", async () => {
   const client = connect();
   await client.opened;

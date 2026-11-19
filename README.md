@@ -88,7 +88,7 @@ The OI-weighted average only counts venues that also have a positive open intere
 **Backfill.** When the first successful poll after a start comes more than 3 intervals after a coin's newest archived point, the service rebuilds the gap from Coinalyze's 1-minute history (`/predicted-funding-rate-history`, `/open-interest-history`). This happens once per process; gaps from an outage while the service runs are not filled.
 - **Range:** points at whole minutes, `INTERVAL_MS` apart (rounded to minutes), from the gap start until the rate history arrived. At most the last 24 h are rebuilt, because Coinalyze keeps only 1500–2000 one-minute bars.
 - **Rules:** each point uses today's venue list and the live rules. A venue's rate is the close of its newest bar, used if that bar closed at most 15 minutes earlier (the staleness limit), and normalized to 8h. Its open interest is the close of its newest OI bar within 60 minutes, because sparse markets publish OI bars rarely (WOO X: up to 16 minutes apart). OI-weighted and the total OI follow the same completeness rules as a live poll.
-- **Marking:** rebuilt points carry `"source": "backfill"` in the archive, the WebSocket `history` message and `/export`.
+- **Marking:** rebuilt points carry `"source": "backfill"` in the archive, the WebSocket `history` and `backfill` messages and `/export`.
 - **Accuracy:** rebuilt values are close to live ones but not identical. Against 21 live polls over 6 minutes (2026-11-03), the median relative difference was 0.16% for AVG, 0.10% for OI-weighted and 0.08% for the total OI. The largest AVG difference was 28%, on a single point.
 
 ## Calibration
@@ -202,6 +202,7 @@ Endpoint: `ws://<host>:<PORT>/ws`. All messages are JSON. The message types are 
 | server → client | `{"type":"auth","status":"ok","coins":["BTC","ETH","SOL"],"interval_ms":60000}` |
 | server → client | `{"type":"history","points":[HistoryPoint, …],"latest":[Snapshot, …]}` right after auth |
 | server → client | `Snapshot` on every successful cycle, one per coin |
+| server → client | `{"type":"backfill","points":[HistoryPoint, …]}` once per backfilled coin, after a restart with a gap |
 | server → client | `{"type":"ping"}` every `PING_INTERVAL_MS`; reply with `{"type":"pong"}` |
 | server → client | `{"type":"error","message":"invalid json" \| "unknown message type"}` |
 
@@ -233,7 +234,7 @@ A `Snapshot`, which is also the element type of the `funding_rate.json` array (`
 }
 ```
 
-A `HistoryPoint` is a `Snapshot` without `components`. Points rebuilt after a restart also carry `"source": "backfill"` (see [Methodology](#methodology)); live points have no `source`.
+A `HistoryPoint` is a `Snapshot` without `components`. Points rebuilt after a restart also carry `"source": "backfill"` (see [Methodology](#methodology)); live points have no `source`. The backfill usually finishes a minute or two after the first poll, so a client that connects in between gets a `history` message with the gap still open; the rebuilt points follow in a `backfill` message: ascending, only those within the server's last 720 points, never a timestamp the client already has. Merge them into the history by timestamp. A `backfill` message has no top-level `symbol`, so clients that filter on `symbol` ignore it.
 
 | Close code | Meaning |
 |---|---|

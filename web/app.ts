@@ -88,6 +88,23 @@ const record = (point: HistoryPoint): boolean => {
   return true;
 };
 
+/** Merges points rebuilt after a restart into their coins' histories: ascending, the newest HISTORY_LIMIT kept. */
+const mergeBackfill = (points: HistoryPoint[]): void => {
+  const touched = new Set<CoinSymbol>();
+  for (const p of points) {
+    const list = history.get(p.symbol) ?? [];
+    list.push(p);
+    history.set(p.symbol, list);
+    touched.add(p.symbol);
+  }
+  // No dedupe: the server sends only points absent from its memory, which this client mirrors.
+  for (const symbol of touched) {
+    const list = history.get(symbol)!;
+    list.sort((a, b) => a.timestamp - b.timestamp);
+    if (list.length > HISTORY_LIMIT) list.splice(0, list.length - HISTORY_LIMIT);
+  }
+};
+
 // ---- Formatting -----------------------------------------------------------
 
 const signed = (v: number, digits: number) => `${v < 0 ? "−" : "+"}${Math.abs(v).toFixed(digits)}`; // U+2212
@@ -421,6 +438,11 @@ const handle = (ws: WebSocket, msg: ServerMessage) => {
       for (const p of msg.points) record(p);
       for (const s of msg.latest) latest.set(s.symbol, s);
       select(selected);
+      return;
+    case "backfill":
+      mergeBackfill(msg.points);
+      // Fits the content: the gap's whitespace is gone, so the old logical range would show other times.
+      if (msg.points.some((p) => p.symbol === selected)) rebuildChart();
       return;
     case "ping":
       send(ws, { type: "pong" });
