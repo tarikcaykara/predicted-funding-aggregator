@@ -161,6 +161,8 @@ v4.2 (PR #37, tagged `v4.2.0`): `Snapshot.open_interest_usd`, the total open int
 
 v4.3 (PR #38, tagged `v4.3.0`): after a restart with a gap, the first successful poll is followed by a backfill from Coinalyze's 1-minute predicted-rate and OI history (the last 24 h of the gap, once per process, points marked `source: "backfill"`, a new last CSV column). Before building it, a 6-minute real-API comparison measured rebuilt vs live values: median 0.16% (AVG), 0.10% (OI-weighted), 0.08% (total OI). The first smoke run found two problems that shaped the design: checking every poll let the backfill's own delay trigger another backfill, and a 10-minute OI window left WOO X (sparse OI bars) without OI, hence once per process and a 60-minute OI window.
 
+v4.4 (PR #40, tagged `v4.4.0`): rebuilt points reach open dashboards without a reload. The store passes the rebuilt points memory keeps to `subscribeBackfill` subscribers, the server publishes them on `CHANNEL` as `{"type":"backfill",points}` (authenticated sockets only, no top-level `symbol`), and the dashboard merges them by timestamp and redraws the chart. Before, a dashboard that connected between the first poll and the backfill showed the gap until a reload. Browser-checked against `test/fake-coinalyze.ts`: a seeded gap filled in place a minute after the reconnect. Rebuilt points keep the normal colours: this is the last Number Line release, and the redesign draws them muted.
+
 Headed mode, a separate server file, the live chart source, the `--once` mode (`bun run once`, removed in v3.0), `SOURCES`/`API_INTERVAL_MS`/`CHART_INTERVAL_MS` and "all STABLE perps" scope are historical.
 
 ## Working conventions for this repo
