@@ -138,7 +138,7 @@ test(
     const page = await fetch(`http://127.0.0.1:${env.PORT}/`);
     expect(page.status).toBe(200);
     expect(page.headers.get("content-type")).toContain("text/html");
-    expect(await page.text()).toContain('id="venue-row"');
+    expect(await page.text()).toContain('id="tpl-venue-row"');
 
     const intruder = connectWs(`ws://127.0.0.1:${env.PORT}/ws`);
     await intruder.opened;
