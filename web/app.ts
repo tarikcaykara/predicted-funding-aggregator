@@ -1,4 +1,4 @@
-import { ColorType, createChart, CrosshairMode, HistogramSeries, LineSeries, TickMarkType, type ISeriesApi, type LineData, type LineWidth, type PriceFormatCustom, type Time, type UTCTimestamp, type WhitespaceData } from "lightweight-charts";
+import { ColorType, createChart, CrosshairMode, HistogramSeries, LineSeries, TickMarkType, type DeepPartial, type ISeriesApi, type LineData, type LineWidth, type PriceFormatCustom, type Time, type TimeChartOptions, type UTCTimestamp, type WhitespaceData } from "lightweight-charts";
 import { isCoinSymbol, type CoinSymbol } from "../src/coins.ts";
 import { STALE_AFTER_MS, VENUES } from "../src/funding/universe.ts"; // pure module: listed-venue count before the first snapshot, venue staleness
 import { CLOSE, HISTORY_LIMIT, type ClientMessage, type ServerMessage } from "../src/protocol.ts";
@@ -8,6 +8,8 @@ type Conn = "disconnected" | "connecting" | "connected" | "rejected";
 type DataState = "waiting-data" | "waiting-oi" | "live" | "stale";
 
 const TOKEN_KEY = "coinalyze.token";
+/** Also read by the inline theme script in index.html. */
+const THEME_KEY = "coinalyze.theme";
 const RECONNECT_MS = 3000;
 const WAIT_DATA = "waiting for data…";
 const WAIT_OI = "waiting for open interest…";
@@ -21,6 +23,7 @@ const field = (row: HTMLElement, name: string) => row.querySelector(`[data-field
 const app = $("#app");
 const tokenForm = $<HTMLFormElement>("#token-form");
 const tokenInput = $<HTMLInputElement>("#token-input");
+const themeToggle = $("#theme-toggle");
 const tokenToggle = $("#token-toggle");
 const tokenConnect = $("#token-connect");
 const tokenConnectLabel = $("#token-connect-label");
@@ -473,16 +476,23 @@ const localTime = (time: Time, withSeconds: boolean) => clock((time as UTCTimest
 const localDate = (time: Time) =>
   new Date((time as UTCTimestamp) * 1000).toLocaleDateString([], { month: "short", day: "numeric" });
 
-const chart = createChart(chartEl, {
-  autoSize: true,
+/** The theme-dependent chart options, at creation and on every theme switch; the tokens follow html[data-theme]. */
+const themeOptions = (): DeepPartial<TimeChartOptions> => ({
   layout: {
     background: { type: ColorType.Solid, color: cssVar("--chart-bg") },
     textColor: cssVar("--chart-text"),
-    fontFamily: cssVar("--font-mono"),
-    fontSize: px("--chart-font-size"),
-    panes: { separatorColor: cssVar("--chart-separator"), separatorHoverColor: cssVar("--chart-separator"), enableResize: false },
+    panes: { separatorColor: cssVar("--chart-separator"), separatorHoverColor: cssVar("--chart-separator") },
   },
   grid: { vertLines: { color: cssVar("--chart-grid") }, horzLines: { color: cssVar("--chart-grid") } },
+  crosshair: {
+    vertLine: { color: cssVar("--chart-crosshair"), labelBackgroundColor: cssVar("--chart-crosshair-label") },
+    horzLine: { color: cssVar("--chart-crosshair"), labelBackgroundColor: cssVar("--chart-crosshair-label") },
+  },
+});
+
+const chart = createChart(chartEl, {
+  autoSize: true,
+  layout: { fontFamily: cssVar("--font-mono"), fontSize: px("--chart-font-size"), panes: { enableResize: false } },
   rightPriceScale: { borderVisible: false },
   timeScale: {
     borderVisible: false,
@@ -493,25 +503,29 @@ const chart = createChart(chartEl, {
     // The library picks the tick type by UTC day; the label shows that point's local date.
     tickMarkFormatter: (t: Time, type: TickMarkType) => (type === TickMarkType.Time || type === TickMarkType.TimeWithSeconds ? localTime(t, false) : localDate(t)),
   },
-  crosshair: {
-    mode: CrosshairMode.Normal,
-    vertLine: { color: cssVar("--chart-crosshair"), labelBackgroundColor: cssVar("--chart-crosshair-label") },
-    horzLine: { color: cssVar("--chart-crosshair"), labelBackgroundColor: cssVar("--chart-crosshair-label") },
-  },
+  crosshair: { mode: CrosshairMode.Normal },
   localization: { timeFormatter: (t: Time) => `${localDate(t)} ${localTime(t, true)}` },
 });
+chart.applyOptions(themeOptions());
 
 // Canvas text does not redraw when the web font arrives.
 void document.fonts.load(`${px("--chart-font-size")}px ${cssVar("--font-mono")}`).then(() => chart.applyOptions({ layout: { fontFamily: cssVar("--font-mono") } }));
 
 const priceFormat: PriceFormatCustom = { type: "custom", minMove: 0.00001, formatter: (p: number) => signed(p, 5) };
 const lineWidth = (px("--chart-line-width") || 2) as LineWidth;
-const spreadPos = cssVar("--chart-spread-pos");
-const spreadNeg = cssVar("--chart-spread-neg");
-const avgBackfill = cssVar("--chart-avg-backfill");
-const oiBackfill = cssVar("--chart-oi-backfill");
-const spreadPosBackfill = cssVar("--chart-spread-pos-backfill");
-const spreadNegBackfill = cssVar("--chart-spread-neg-backfill");
+
+/** Series and per-point colours of the current theme; recolorChart re-reads them. */
+const readColors = () => ({
+  avg: cssVar("--chart-avg"),
+  oi: cssVar("--chart-oi"),
+  spreadPos: cssVar("--chart-spread-pos"),
+  spreadNeg: cssVar("--chart-spread-neg"),
+  avgBackfill: cssVar("--chart-avg-backfill"),
+  oiBackfill: cssVar("--chart-oi-backfill"),
+  spreadPosBackfill: cssVar("--chart-spread-pos-backfill"),
+  spreadNegBackfill: cssVar("--chart-spread-neg-backfill"),
+});
+let colors = readColors();
 const isBackfill = (p: HistoryPoint) => p.source === "backfill";
 
 interface Track {
@@ -522,23 +536,25 @@ interface Track {
   lastTime: number;
 }
 
+const avgTrack: Track = {
+  series: chart.addSeries(LineSeries, { color: colors.avg, lineWidth, priceFormat, priceLineVisible: false }),
+  pick: (p) => p.aggregated_predicted_funding_rate,
+  color: (p) => (isBackfill(p) ? colors.avgBackfill : undefined),
+  lastTime: 0,
+};
+const oiTrack: Track = {
+  series: chart.addSeries(LineSeries, { color: colors.oi, lineWidth, priceFormat, priceLineVisible: false }),
+  pick: (p) => p.oi_weighted_predicted_funding_rate,
+  color: (p) => (isBackfill(p) ? colors.oiBackfill : undefined),
+  lastTime: 0,
+};
 const tracks: Track[] = [
-  {
-    series: chart.addSeries(LineSeries, { color: cssVar("--chart-avg"), lineWidth, priceFormat, priceLineVisible: false }),
-    pick: (p) => p.aggregated_predicted_funding_rate,
-    color: (p) => (isBackfill(p) ? avgBackfill : undefined),
-    lastTime: 0,
-  },
-  {
-    series: chart.addSeries(LineSeries, { color: cssVar("--chart-oi"), lineWidth, priceFormat, priceLineVisible: false }),
-    pick: (p) => p.oi_weighted_predicted_funding_rate,
-    color: (p) => (isBackfill(p) ? oiBackfill : undefined),
-    lastTime: 0,
-  },
+  avgTrack,
+  oiTrack,
   {
     series: chart.addSeries(HistogramSeries, { priceFormat, priceLineVisible: false }, 1),
     pick: (p) => (p.oi_weighted_predicted_funding_rate === null ? null : p.oi_weighted_predicted_funding_rate - p.aggregated_predicted_funding_rate),
-    color: (p, v) => (isBackfill(p) ? (v < 0 ? spreadNegBackfill : spreadPosBackfill) : v < 0 ? spreadNeg : spreadPos),
+    color: (p, v) => (isBackfill(p) ? (v < 0 ? colors.spreadNegBackfill : colors.spreadPosBackfill) : v < 0 ? colors.spreadNeg : colors.spreadPos),
     lastTime: 0,
   },
 ];
@@ -605,6 +621,15 @@ const pushPoint = (p: HistoryPoint, evicted: boolean) => {
     track.series.update(color === undefined ? point : { ...point, color });
     track.lastTime = time;
   }
+};
+
+/** Theme switch: re-reads the tokens and recolours the chart, rebuilt points included, keeping the user's zoom. */
+const recolorChart = () => {
+  colors = readColors();
+  chart.applyOptions(themeOptions());
+  avgTrack.series.applyOptions({ color: colors.avg });
+  oiTrack.series.applyOptions({ color: colors.oi });
+  rebuildChart(false);
 };
 
 // ---- Coins ----------------------------------------------------------------
@@ -762,6 +787,41 @@ tokenToggle.addEventListener("click", () => {
   tokenToggle.setAttribute("aria-pressed", String(reveal));
 });
 
+// ---- Theme ----------------------------------------------------------------
+// The inline script in index.html sets html[data-theme] before the first paint: the stored choice, else
+// prefers-color-scheme. Theme changes are not announced in #data-announce.
+
+type Theme = "light" | "dark";
+const darkScheme = matchMedia("(prefers-color-scheme: dark)");
+
+const storedTheme = (): Theme | null => {
+  const theme = localStorage.getItem(THEME_KEY);
+  return theme === "light" || theme === "dark" ? theme : null;
+};
+
+const setTheme = (theme: Theme) => {
+  themeToggle.setAttribute("aria-pressed", String(theme === "dark"));
+  if (document.documentElement.dataset.theme === theme) return;
+  document.documentElement.dataset.theme = theme;
+  recolorChart();
+};
+
+themeToggle.addEventListener("click", () => {
+  const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  localStorage.setItem(THEME_KEY, next);
+  setTheme(next);
+});
+
+// With no stored choice the page follows the system setting live.
+darkScheme.addEventListener("change", (event) => {
+  if (storedTheme() === null) setTheme(event.matches ? "dark" : "light");
+});
+
+// Another tab changed the stored choice.
+window.addEventListener("storage", (event) => {
+  if (event.key === THEME_KEY) setTheme(storedTheme() ?? (darkScheme.matches ? "dark" : "light"));
+});
+
 // Data age every second; a data-state change (e.g. to stale) re-renders everything.
 setInterval(() => {
   const s = latest.get(selected);
@@ -771,6 +831,7 @@ setInterval(() => {
 }, 1000);
 
 $("#history-tz").textContent = Intl.DateTimeFormat().resolvedOptions().timeZone || "local";
+setTheme(document.documentElement.dataset.theme === "dark" ? "dark" : "light"); // writes the switch's aria-pressed
 render();
 
 const stored = localStorage.getItem(TOKEN_KEY);

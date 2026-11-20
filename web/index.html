@@ -1,9 +1,22 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Predicted Funding Aggregator</title>
+<script>
+  /* Theme before first paint (keep in sync with app.ts, "Theme"):
+     stored choice localStorage["coinalyze.theme"]  >  prefers-color-scheme. */
+  (function () {
+    var t = null;
+    try {
+      var s = localStorage.getItem('coinalyze.theme');
+      if (s === 'light' || s === 'dark') t = s;
+    } catch (e) { /* storage unavailable */ }
+    if (!t) t = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', t);
+  })();
+</script>
 <link rel="stylesheet" href="./style.css">
 <script type="module" src="./app.ts"></script>
 </head>
@@ -13,8 +26,14 @@
 
     <header class="bar">
       <div class="brand">
-        <h1 class="brand-title">Predicted Funding Aggregator</h1>
-        <p class="brand-sub">Cross-venue predicted funding for perpetuals · % per 8h</p>
+        <div class="brand-text">
+          <h1 class="brand-title">Predicted Funding Aggregator</h1>
+          <p class="brand-sub">Cross-venue predicted funding for perpetuals · % per 8h</p>
+        </div>
+        <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false">
+          <span class="theme-toggle-track" aria-hidden="true"><span class="theme-toggle-thumb"></span></span>
+          <span class="theme-toggle-label">Dark theme</span>
+        </button>
       </div>
 
       <form id="token-form" class="gate" novalidate>
