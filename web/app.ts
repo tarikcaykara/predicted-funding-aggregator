@@ -754,6 +754,10 @@ const connect = () => {
     if (socket !== ws) return; // replaced by a newer connection
     socket = null;
     if (event.code === CLOSE.invalidToken) {
+      // A rejected token shows nothing, not the data an earlier token received.
+      history.clear();
+      latest.clear();
+      rebuildChart();
       setConn("rejected");
       return;
     }
