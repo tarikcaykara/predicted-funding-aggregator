@@ -1,22 +1,9 @@
 <!doctype html>
-<html lang="en" data-theme="light">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Predicted Funding Aggregator</title>
-<script>
-  /* Theme before first paint (keep in sync with app.ts, "Theme"):
-     stored choice localStorage["coinalyze.theme"]  >  prefers-color-scheme. */
-  (function () {
-    var t = null;
-    try {
-      var s = localStorage.getItem('coinalyze.theme');
-      if (s === 'light' || s === 'dark') t = s;
-    } catch (e) { /* storage unavailable */ }
-    if (!t) t = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-    document.documentElement.setAttribute('data-theme', t);
-  })();
-</script>
 <link rel="stylesheet" href="./style.css">
 <script type="module" src="./app.ts"></script>
 </head>
@@ -26,14 +13,8 @@
 
     <header class="bar">
       <div class="brand">
-        <div class="brand-text">
-          <h1 class="brand-title">Predicted Funding Aggregator</h1>
-          <p class="brand-sub">Cross-venue predicted funding for perpetuals · % per 8h</p>
-        </div>
-        <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false">
-          <span class="theme-toggle-track" aria-hidden="true"><span class="theme-toggle-thumb"></span></span>
-          <span class="theme-toggle-label">Dark theme</span>
-        </button>
+        <h1 class="brand-title">Predicted Funding Aggregator</h1>
+        <p class="brand-sub">Cross-venue predicted funding for perpetuals · % per 8h</p>
       </div>
 
       <form id="token-form" class="gate" novalidate>
@@ -45,12 +26,6 @@
         </div>
         <p id="token-help" class="help" data-tone="neutral">Paste the access token from your service config. It is remembered on this device.</p>
       </form>
-
-      <div id="conn-status" class="conn">
-        <span class="conn-dot" aria-hidden="true"></span>
-        <span id="conn-label" class="conn-label">Disconnected</span>
-        <span id="conn-note" class="conn-note">Enter a token to connect</span>
-      </div>
     </header>
 
     <section class="selrow" aria-label="Coin and data age">
