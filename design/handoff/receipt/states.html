@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Predicted Funding Aggregator · state board</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600;700&amp;display=swap">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body class="board">
+<header class="board-head">
+  <div>
+    <h1 class="board-title">Predicted Funding Aggregator · state board</h1>
+    <p class="board-lede">Every state of the dashboard as an iframe of index.html at 1440, 768 and 390 px. Each query opens that state on its own.</p>
+  </div>
+  <div class="board-controls">
+    <label for="board-zoom">Scale</label>
+    <select id="board-zoom">
+      <option value="1">100%</option>
+      <option value="0.5" selected>50%</option>
+      <option value="0.33">33%</option>
+      <option value="0.25">25%</option>
+    </select>
+  </div>
+</header>
+<nav aria-label="States"><ul id="board-toc" class="board-toc"></ul></nav>
+<main id="board"></main>
+
+<script>
+(function () {
+  'use strict';
+  var STATES = [
+    ['disconnected', 'Disconnected', 'Empty token field; nothing connected yet, so every value reads “not connected”.', '?state=disconnected'],
+    ['connecting', 'Connecting', 'Token sent; Connect is busy and the status shows the socket opening.', '?state=connecting'],
+    ['rejected', 'Rejected', 'The service refused the token; the field and its help text show the error.', '?state=rejected'],
+    ['waiting-data', 'Connected · waiting for data', 'Authenticated, but no snapshot yet: every value is pending.', '?state=waiting-data'],
+    ['waiting-oi', 'Connected · waiting for open interest', 'AVG is shown; OI-weighted, spread and total OI stay pending until the venues report open interest.', '?state=waiting-oi'],
+    ['live-btc', 'Live · BTC', 'Fresh snapshot, 4 s old.', '?state=live&coin=BTC'],
+    ['live-eth', 'Live · ETH', 'Fresh snapshot, 4 s old.', '?state=live&coin=ETH'],
+    ['live-sol', 'Live · SOL', 'Fresh snapshot, 4 s old; SOL has negative venue rates.', '?state=live&coin=SOL'],
+    ['stale', 'Stale', 'No new snapshot for 3 m 34 s, more than 3 poll intervals.', '?state=stale'],
+    ['backfill', 'Live · BTC with a rebuilt range', 'Points from 6 h to 4 h 30 min before the newest point are rebuilt and drawn muted; the “Rebuilt (backfill)” legend item shows.', '?state=live&coin=BTC&fixture=backfill'],
+    ['statuses', 'Live · BTC with every venue status', 'WOO X stale, DERIBIT not listed, HUOBI and OKX without a rate; aggregates recomputed from the 6 used venues.', '?state=live&coin=BTC&fixture=statuses'],
+    ['token-visible', 'Live · token visible', 'Show pressed: the token is shown in plain text and the button reads Hide.', '?state=live&token=visible'],
+    ['pseudo-coin', 'Hover and focus · coin selector', 'BTC selected with keyboard focus; the pointer is over ETH.', '?state=live&coin=BTC&pseudo=coin'],
+    ['pseudo-buttons', 'Hover and focus · buttons', 'Token visible; Hide has keyboard focus, the pointer is over Connect.', '?state=live&token=visible&pseudo=buttons'],
+    ['pseudo-rows', 'Hover and focus · venue rows', 'Pointer over the first venue, keyboard focus on the second, the third and the first excluded venue open.', '?state=live&coin=BTC&pseudo=rows']
+  ];
+  var WIDTHS = [1440, 768, 390];
+  var board = document.getElementById('board'), toc = document.getElementById('board-toc');
+  var frames = [];
+
+  STATES.forEach(function (s) {
+    var li = document.createElement('li');
+    var a = document.createElement('a');
+    a.href = '#state-' + s[0];
+    a.textContent = s[1];
+    li.appendChild(a);
+    toc.appendChild(li);
+
+    var sec = document.createElement('section');
+    sec.className = 'board-state';
+    sec.id = 'state-' + s[0];
+    sec.setAttribute('aria-labelledby', 'state-' + s[0] + '-name');
+    var h = document.createElement('h2');
+    h.className = 'board-state-name';
+    h.id = 'state-' + s[0] + '-name';
+    h.textContent = s[1];
+    var p = document.createElement('p');
+    p.className = 'board-state-desc';
+    p.textContent = s[2];
+    var q = document.createElement('a');
+    q.className = 'board-query';
+    q.href = 'index.html' + s[3];
+    q.textContent = 'index.html' + s[3];
+    var row = document.createElement('div');
+    row.className = 'board-frames';
+    WIDTHS.forEach(function (w) {
+      var fig = document.createElement('figure');
+      fig.className = 'board-frame';
+      var cap = document.createElement('figcaption');
+      cap.textContent = w + ' px';
+      var f = document.createElement('iframe');
+      f.src = 'index.html' + s[3];
+      f.width = String(w);
+      f.height = '1600';
+      f.loading = 'lazy';
+      f.title = s[1] + ' at ' + w + ' px';
+      fig.appendChild(cap);
+      fig.appendChild(f);
+      row.appendChild(fig);
+      frames.push(f);
+    });
+    sec.appendChild(h);
+    sec.appendChild(p);
+    sec.appendChild(q);
+    sec.appendChild(row);
+    board.appendChild(sec);
+  });
+
+  // Each dashboard reports its height (app.js, state-board section).
+  window.addEventListener('message', function (e) {
+    if (!e.data || e.data.type !== 'pfa:height') return;
+    frames.forEach(function (f) { if (f.contentWindow === e.source) f.height = String(Math.ceil(e.data.height)); });
+  });
+
+  var zoom = document.getElementById('board-zoom');
+  function applyZoom() { document.documentElement.style.setProperty('--board-zoom', zoom.value); }
+  zoom.addEventListener('change', applyZoom);
+  applyZoom();
+})();
+</script>
+</body>
+</html>

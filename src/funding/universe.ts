@@ -25,3 +25,6 @@ export const VENUES: readonly Venue[] = [
   { label: "OKX", exchange: "3", quote: "USDT", ratePeriodHours: 8 },
   { label: "WOO X", exchange: "W", quote: "USDT", ratePeriodHours: 8 },
 ];
+
+/** Predicted rates older than this are excluded (live venues update about every minute). */
+export const STALE_AFTER_MS = 15 * 60 * 1000;

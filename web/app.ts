@@ -1,80 +1,83 @@
 import { ColorType, createChart, CrosshairMode, HistogramSeries, LineSeries, TickMarkType, type ISeriesApi, type LineData, type LineWidth, type PriceFormatCustom, type Time, type UTCTimestamp, type WhitespaceData } from "lightweight-charts";
 import { isCoinSymbol, type CoinSymbol } from "../src/coins.ts";
-import { VENUES } from "../src/funding/universe.ts"; // pure module: placeholder pip count before the first snapshot
+import { STALE_AFTER_MS, VENUES } from "../src/funding/universe.ts"; // pure module: listed-venue count before the first snapshot, venue staleness
 import { CLOSE, HISTORY_LIMIT, type ClientMessage, type ServerMessage } from "../src/protocol.ts";
 import type { ComponentStatus, HistoryPoint, MarketComponent, Snapshot } from "../src/types.ts";
 
-type Status = "Connecting" | "Connected" | "Rejected" | "Disconnected";
+type Conn = "disconnected" | "connecting" | "connected" | "rejected";
 type DataState = "waiting-data" | "waiting-oi" | "live" | "stale";
 
 const TOKEN_KEY = "coinalyze.token";
 const RECONNECT_MS = 3000;
 const WAIT_DATA = "waiting for data…";
 const WAIT_OI = "waiting for open interest…";
-const STATUS_LABEL: Record<ComponentStatus, string> = {
-  used: "Used",
-  stale: "Excluded · stale",
-  no_rate: "Excluded · no predicted rate",
-  unlisted: "Excluded · not listed",
-};
-const CONN_DETAIL: Record<Status, string> = {
-  Disconnected: "Enter a token and connect.",
-  Connecting: "Opening live connection…",
-  Connected: "Live",
-  Rejected: "Token rejected. Check it and connect again.",
-};
+const OFFLINE = "not connected";
+const PENDING = "pending";
 
-const $ = <T extends HTMLElement>(selector: string) => document.querySelector(selector) as T;
-const $$ = <T extends HTMLElement>(selector: string) => [...document.querySelectorAll<T>(selector)];
-const cell = (root: HTMLElement, selector: string) => root.querySelector(selector) as HTMLElement;
+const $ = <T extends HTMLElement = HTMLElement>(selector: string) => document.querySelector(selector) as T;
+const $$ = <T extends HTMLElement = HTMLElement>(selector: string) => [...document.querySelectorAll<T>(selector)];
+const field = (row: HTMLElement, name: string) => row.querySelector(`[data-field="${name}"]`) as HTMLElement;
 
-const app = $<HTMLElement>("#app");
-const tokenForm = $<HTMLFormElement>("#auth");
-const tokenInput = $<HTMLInputElement>("#token");
-const tokenToggle = $<HTMLButtonElement>("#toggle");
-const connectButton = $<HTMLButtonElement>("#connect");
-const connDetail = $<HTMLElement>("#conn-detail");
-const connLabels = $$<HTMLElement>("[data-conn-label]");
-const coinButtons = $$<HTMLButtonElement>("#coins .coin");
-const coinLabels = $$<HTMLElement>("[data-coin-label]");
-const age = $<HTMLElement>("#age");
-const pips = $<HTMLElement>("#pips");
-const historyWindow = $<HTMLElement>("#history-window");
-const venues = $<HTMLElement>("#venues");
-const venueRows = $<HTMLElement>("#venue-rows");
-const venueRow = $<HTMLTemplateElement>("#venue-row").content.firstElementChild as HTMLElement;
-const axisMin = $<HTMLElement>("[data-axis-min]");
-const axisMax = $<HTMLElement>("[data-axis-max]");
-const axisOi = $<HTMLElement>(".axis__oi");
-const dataAnnounce = $<HTMLElement>("#data-announce");
+const app = $("#app");
+const tokenForm = $<HTMLFormElement>("#token-form");
+const tokenInput = $<HTMLInputElement>("#token-input");
+const tokenToggle = $("#token-toggle");
+const tokenConnect = $("#token-connect");
+const tokenConnectLabel = $("#token-connect-label");
+const tokenHelp = $("#token-help");
+const coinGroup = $("#coin-group");
+const coinButtons = $$<HTMLButtonElement>('#coin-group [role="radio"]');
+const coinBinds = $$('[data-bind="coin"]');
+const usedCountBinds = $$('[data-bind="used-count"]');
+const ageValue = $("#data-age-value");
+const ageNote = $("#data-age-note");
+const staleNoticeText = $("#stale-notice-text");
+const kpis = $("#kpis");
+const kpiAvg = $("#kpi-avg");
+const kpiOi = $("#kpi-oi");
+const kpiSpread = $("#kpi-spread");
+const kpiVenues = $("#kpi-venues");
+const kpiMarks = $("#kpi-venues-marks");
+const kpiOiTotal = $("#kpi-oi-total");
+const kpiOiTotalNote = $("#kpi-oi-total-note");
+const historyWindow = $("#history-window");
+const chartEl = $<HTMLDivElement>("#chart");
+const chartStatus = $("#chart-status");
+const legendBackfill = $("#legend-backfill");
+const backfillNote = $("#history-backfill-note");
+const venueTable = $("#venue-table");
+const venuePlaceholderTitle = $("#venue-placeholder-title");
+const venuePlaceholderText = $("#venue-placeholder-text");
+const rowsUsed = $("#venue-rows-used");
+const rowsExcluded = $("#venue-rows-excluded");
+const sumUsedOi = $("#sum-used-oi");
+const sumWeights = $("#sum-weights");
+const sumAvg = $("#sum-avg");
+const sumOi = $("#sum-oi");
+const excludedCount = $("#venue-excluded-count");
+const listedCount = $("#venue-listed-count");
+const venueTotalOi = $("#venue-total-oi");
+const dataAnnounce = $("#data-announce");
+const venueRowTemplate = $<HTMLTemplateElement>("#tpl-venue-row").content.firstElementChild as HTMLElement;
+const venueLineTemplate = $<HTMLTemplateElement>("#tpl-venue-line").content.firstElementChild as HTMLElement;
 
 let socket: WebSocket | null = null;
 let reconnectTimer: number | undefined;
 let coins: CoinSymbol[] = [];
 let intervalMs = Infinity;
 let selected: CoinSymbol = "BTC";
+let conn: Conn = "disconnected";
+/** Connect was pressed with an empty token field. */
+let tokenEmpty = false;
+/** The data state of the last full render; the 1 s tick re-renders everything only when it changes. */
+let renderedState: DataState | undefined;
+let announced = "";
+/** Venues of the selected coin whose arithmetic is open. */
+const openVenues = new Set<string>();
 const history = new Map<CoinSymbol, HistoryPoint[]>();
 const latest = new Map<CoinSymbol, Snapshot>();
-/** Three poll intervals: older data is flagged STALE, and a longer pause between points is drawn as a gap. */
+/** Three poll intervals: older data is flagged stale, and a longer pause between points is drawn as a gap. */
 const staleAfterMs = () => 3 * intervalMs;
-
-/** Spoken by `#data-announce` when the selected coin's data state changes. */
-const DATA_ANNOUNCE: Record<DataState, (coin: CoinSymbol) => string> = {
-  "waiting-data": (c) => `${c}: waiting for data`,
-  "waiting-oi": (c) => `${c}: AVG live, OI-weighted waiting for open interest`,
-  live: (c) => `${c}: live`,
-  stale: (c) => `${c}: data is stale`,
-};
-
-const setStatus = (status: Status) => {
-  app.dataset.conn = status.toLowerCase();
-  for (const label of connLabels) label.textContent = status;
-  connDetail.textContent = CONN_DETAIL[status];
-  tokenInput.setAttribute("aria-invalid", String(status === "Rejected"));
-  const connecting = status === "Connecting";
-  connectButton.disabled = connecting;
-  connectButton.textContent = connecting ? "Connecting…" : "Connect";
-};
 
 const send = (ws: WebSocket, msg: ClientMessage) => ws.send(JSON.stringify(msg));
 
@@ -107,156 +110,354 @@ const mergeBackfill = (points: HistoryPoint[]): void => {
 
 // ---- Formatting -----------------------------------------------------------
 
-const signed = (v: number, digits: number) => `${v < 0 ? "−" : "+"}${Math.abs(v).toFixed(digits)}`; // U+2212
+/** Signed with U+2212; a value that rounds to zero carries no sign. */
+const signed = (v: number, digits: number) => {
+  const abs = Math.abs(v).toFixed(digits);
+  return Number(abs) === 0 ? abs : `${v < 0 ? "−" : "+"}${abs}`;
+};
+const rate = (v: number | null) => (v === null ? "—" : signed(v, 5));
 const usd = (v: number) => (v >= 1e9 ? `$${(v / 1e9).toFixed(2)}B` : v >= 1e6 ? `$${(v / 1e6).toFixed(2)}M` : `$${(v / 1e3).toFixed(1)}K`);
-const signClass = (v: number) => (v < 0 ? "is-neg" : "is-pos");
 const weightText = (w: number) => (w > 0 && w < 0.0005 ? "<0.1%" : `${(w * 100).toFixed(1)}%`);
+const pad2 = (n: number) => String(n).padStart(2, "0");
 
-const formatAge = (ms: number) => {
+/** 4s · 3m 34s · 2h 05m */
+const duration = (ms: number) => {
   const s = Math.max(0, Math.floor(ms / 1000));
-  if (s < 60) return `${s}s ago`;
-  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s ago`;
-  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m ago`;
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${s % 60}s`;
+  return `${Math.floor(m / 60)}h ${pad2(m % 60)}m`;
 };
 
-// ---- Headline -------------------------------------------------------------
+/** Local 24 h clock. */
+const clock = (ms: number, withSeconds: boolean) => {
+  const d = new Date(ms);
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}${withSeconds ? `:${pad2(d.getSeconds())}` : ""}`;
+};
+
+const slug = (venue: string) => `venue-${venue.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`;
+
+// ---- Derived state --------------------------------------------------------
 
 /** Stale beats waiting-oi, so an old snapshot is always flagged. */
 const dataState = (s: Snapshot | undefined): DataState =>
   !s ? "waiting-data" : Date.now() - s.timestamp > staleAfterMs() ? "stale" : s.oi_weighted_predicted_funding_rate === null ? "waiting-oi" : "live";
 
-const setMetric = (id: string, text: string, note: string | null, tone: string, waiting: boolean) => {
-  const value = $<HTMLElement>(`#${id}`);
-  value.textContent = text;
-  value.className = `metric__value ${waiting ? "is-waiting" : tone}`;
-  if (note === null) return;
-  const noteEl = $<HTMLElement>(`#${id}-note`);
-  noteEl.textContent = note;
-  noteEl.className = `metric__note${waiting ? " is-waiting" : ""}`;
+/** Shown wherever a value has not arrived yet. */
+const pendingText = () => (conn === "disconnected" || conn === "rejected" ? OFFLINE : WAIT_DATA);
+
+const listed = (s: Snapshot) => s.components.filter((c) => c.status !== "unlisted").length;
+
+interface VenueRow {
+  c: MarketComponent;
+  used: boolean;
+  /** Share of the used venues' open interest; null until every used venue has reported it. */
+  weight: number | null;
+  /** Number of used venues. */
+  n: number;
+  usedOi: number | null;
+}
+
+const STATUS_ORDER: Record<ComponentStatus, number> = { used: 0, stale: 1, unlisted: 2, no_rate: 3 };
+
+/** Breakdown order: used venues, then stale, unlisted and no_rate ones, each group by open interest. */
+const venueRows = (s: Snapshot): VenueRow[] => {
+  const used = s.components.filter((c) => c.status === "used");
+  const usedOi = used.every((c) => c.oi_usd !== null) ? used.reduce((sum, c) => sum + (c.oi_usd ?? 0), 0) : null;
+  return s.components
+    .map((c) => {
+      const isUsed = c.status === "used";
+      return { c, used: isUsed, weight: isUsed && usedOi ? (c.oi_usd ?? 0) / usedOi : null, n: used.length, usedOi };
+    })
+    .sort((a, b) => STATUS_ORDER[a.c.status] - STATUS_ORDER[b.c.status] || (b.c.oi_usd ?? 0) - (a.c.oi_usd ?? 0));
 };
 
-const renderHeadline = () => {
-  const s = latest.get(selected);
-  const state = dataState(s);
-  app.dataset.data = state;
-  // Runs every second; only a change is written, so screen readers hear each transition once.
-  const text = DATA_ANNOUNCE[state](selected);
-  if (dataAnnounce.textContent !== text) dataAnnounce.textContent = text;
-  for (const button of coinButtons) {
-    const oi = latest.get(button.dataset.coin as CoinSymbol)?.oi_weighted_predicted_funding_rate ?? null;
-    cell(button, ".coin__val").textContent = oi === null ? "—" : signed(oi, 5);
+const since = (c: MarketComponent) => (c.updated_at === null ? "" : ` ${duration(Date.now() - c.updated_at)}`);
+
+const oiCounts = (c: MarketComponent) => (c.oi_usd === null ? WAIT_OI : `${usd(c.oi_usd)} still counts toward total open interest.`);
+
+/** The arithmetic shown when a venue row is open. */
+const detailLines = ({ c, weight, n, usedOi }: VenueRow): [string, string][] => {
+  if (c.status === "used") {
+    const r8 = c.rate_8h ?? 0; // FundingSource guarantees used ⇒ rate_8h !== null
+    return [
+      ["Rate / 8h", c.rate_period_hours === 8 ? `${rate(r8)}, already per 8h` : `${rate(c.predicted_rate)} per ${c.rate_period_hours}h × ${8 / c.rate_period_hours} = ${rate(r8)}`],
+      ["→ AVG", `${rate(r8)} ÷ ${n} = ${rate(r8 / n)}`],
+      ["→ OI-weighted", weight === null ? WAIT_OI : `${rate(r8)} × ${weightText(weight)} = ${rate(r8 * weight)}`],
+      ["OI weight", weight === null || usedOi === null ? "pending until every used venue reports open interest" : `${usd(c.oi_usd ?? 0)} of ${usd(usedOi)} used open interest`],
+    ];
   }
-  age.textContent = s ? formatAge(Date.now() - s.timestamp) : "—";
+  if (c.status === "stale") {
+    return [
+      ["Why excluded", `Last update${since(c)} ago, older than the ${STALE_AFTER_MS / 60_000} min staleness limit.`],
+      ["Last rate", `${rate(c.rate_8h)} per 8h, shown for reference only.`],
+      ["Open interest", oiCounts(c)],
+    ];
+  }
+  if (c.status === "unlisted") return [["Why excluded", `This market is not listed on ${c.venue}, so it has no rate and no open interest.`]];
+  return [
+    ["Why excluded", "No predicted rate from this venue, so it is outside AVG and OI-weighted."],
+    ["Open interest", oiCounts(c)],
+  ];
+};
+
+// ---- Render ---------------------------------------------------------------
+
+const renderRoot = (s: Snapshot | undefined, state: DataState) => {
+  app.dataset.conn = conn;
+  app.dataset.data = state;
+  for (const node of coinBinds) node.textContent = selected;
+  const used = s ? String(s.components.filter((c) => c.status === "used").length) : "n";
+  for (const node of usedCountBinds) node.textContent = used;
+};
+
+const renderGate = () => {
+  const invalid = conn === "rejected" || tokenEmpty;
+  tokenInput.setAttribute("aria-invalid", String(invalid));
+  const busy = conn === "connecting";
+  tokenConnect.setAttribute("aria-disabled", String(busy));
+  tokenConnectLabel.textContent = busy ? "Connecting…" : "Connect";
+  tokenHelp.textContent = tokenEmpty
+    ? "Enter a token to connect."
+    : conn === "rejected"
+      ? "Token rejected by the service. Check it and connect again."
+      : conn === "disconnected"
+        ? "Paste the access token from your service config. It is remembered on this device."
+        : "Remembered on this device, so a reload reconnects.";
+  tokenHelp.dataset.tone = invalid ? "error" : "neutral";
+};
+
+const renderCoins = () => {
+  for (const button of coinButtons) {
+    const on = button.dataset.coin === selected;
+    button.setAttribute("aria-checked", String(on));
+    button.tabIndex = on ? 0 : -1;
+    const oi = latest.get(button.dataset.coin as CoinSymbol)?.oi_weighted_predicted_funding_rate ?? null;
+    (button.querySelector("[data-coin-rate]") as HTMLElement).textContent = conn !== "connected" ? "—" : oi === null ? PENDING : rate(oi);
+  }
+};
+
+const renderAge = (s: Snapshot | undefined, state: DataState) => {
   if (!s) {
-    for (const id of ["m-avg", "m-oi", "m-sp"]) setMetric(id, "—", WAIT_DATA, "", true);
-    setMetric("m-ven", "—", null, "", true);
-    pips.replaceChildren(...VENUES.map(() => Object.assign(document.createElement("span"), { className: "pip" })));
+    ageValue.textContent = "—";
+    ageNote.textContent = conn === "connected" || conn === "connecting" ? "No snapshot yet" : "Not connected";
+    staleNoticeText.textContent = "";
+    return;
+  }
+  const age = duration(Date.now() - s.timestamp);
+  ageValue.textContent = `${age} ago`;
+  const stale = state === "stale";
+  ageNote.textContent = stale ? `Stale · older than 3 poll intervals (${staleAfterMs() / 1000} s)` : `Fresh · snapshot at ${clock(s.timestamp, true)}`;
+  staleNoticeText.textContent = stale
+    ? `No new snapshot for ${age}, more than 3 poll intervals. The values below are the last ones received, at ${clock(s.timestamp, true)}.`
+    : "";
+};
+
+const setValue = (node: HTMLElement, text: string, pending: boolean) => {
+  node.textContent = text;
+  node.dataset.pending = String(pending);
+};
+
+const renderKpis = (s: Snapshot | undefined) => {
+  kpis.setAttribute("aria-label", `Headline values for ${selected}`);
+  if (!s) {
+    for (const node of [kpiAvg, kpiOi, kpiSpread, kpiVenues, kpiOiTotal]) setValue(node, pendingText(), true);
+    kpiOiTotalNote.textContent = `USD · ${VENUES.length} listed venues`;
+    kpiMarks.replaceChildren();
     return;
   }
   const avg = s.aggregated_predicted_funding_rate;
   const oi = s.oi_weighted_predicted_funding_rate;
-  setMetric("m-avg", signed(avg, 5), `% per 8h · ${avg < 0 ? "negative" : "positive"}`, signClass(avg), false);
-  if (oi === null) {
-    setMetric("m-oi", "—", WAIT_OI, "", true);
-    setMetric("m-sp", "—", WAIT_OI, "", true);
-  } else {
-    const sp = oi - avg;
-    setMetric("m-oi", signed(oi, 5), `% per 8h · ${oi < 0 ? "negative" : "positive"}`, signClass(oi), false);
-    setMetric("m-sp", signed(sp, 5), "pp · OI-weighted − AVG", signClass(sp), false);
-  }
-  setMetric("m-ven", `${s.markets} / ${s.components.length}`, null, "", false);
-  pips.replaceChildren(...s.components.map((c) => Object.assign(document.createElement("span"), { className: c.status === "used" ? "pip pip--used" : "pip pip--excluded" })));
-};
-
-// ---- Per-venue number line ------------------------------------------------
-
-/** `FundingSource.component` guarantees used ⇒ rate_8h !== null; the guard only narrows the type. */
-const onLine = (c: MarketComponent): c is MarketComponent & { rate_8h: number } => c.status === "used" && c.rate_8h !== null;
-
-const renderVenues = () => {
-  venueRows.replaceChildren();
-  const s = latest.get(selected);
-  if (!s) return; // CSS hides the table on waiting-data
-  const avg = s.aggregated_predicted_funding_rate;
-  const oi = s.oi_weighted_predicted_funding_rate;
-  const used = s.components.filter(onLine).sort((a, b) => b.rate_8h - a.rate_8h);
-  const rows = [...used, ...s.components.filter((c) => !onLine(c))];
-  const oiSum = used.reduce((sum, c) => sum + (c.oi_usd ?? 0), 0);
-
-  // Shared axis over every on-line rate, AVG, OI-weighted and zero.
-  const vals = [...used.map((c) => c.rate_8h), avg, 0, ...(oi === null ? [] : [oi])];
-  let mn = Math.min(...vals);
-  let mx = Math.max(...vals);
-  const pad = (mx - mn) * 0.08 || 0.0001; // guards a zero span
-  mn -= pad;
-  mx += pad;
-  const pos = (v: number) => `${(((v - mn) / (mx - mn)) * 100).toFixed(2)}%`;
-  venues.style.setProperty("--zero", pos(0));
-  venues.style.setProperty("--avg", pos(avg));
-  if (oi !== null) venues.style.setProperty("--oi", pos(oi));
-  const near = (v: number) => Math.abs(v) / (mx - mn) < 0.1;
-  const minT = near(mn) ? "" : signed(mn, 4);
-  const maxT = near(mx) ? "" : signed(mx, 4);
-  axisMin.textContent = minT;
-  axisMax.textContent = maxT;
-  axisOi.hidden = oi === null;
-
-  venueRows.append(
-    ...rows.map((c) => {
-      const live = onLine(c);
-      const w = oi !== null && live && c.oi_usd !== null && oiSum > 0 ? c.oi_usd / oiSum : null;
-      const row = venueRow.cloneNode(true) as HTMLElement;
-      row.dataset.status = c.status;
-      if (c.status !== "used") row.classList.add("is-excluded");
-      if (c.rate_8h !== null && c.rate_8h < 0) row.classList.add("is-neg-rate");
-      cell(row, ".v__name").textContent = c.venue;
-      cell(row, ".v__sym").textContent = c.symbol ?? "—";
-      cell(row, ".v__pred").textContent = c.predicted_rate === null ? "—" : signed(c.predicted_rate, 5);
-      cell(row, ".v__per").textContent = `${c.rate_period_hours}h`;
-      const r8 = cell(row, ".v__r8-val");
-      r8.textContent = c.rate_8h === null ? "—" : signed(c.rate_8h, 4);
-      if (live) r8.className = `v__r8-val ${signClass(c.rate_8h)}`;
-      // The design shows "—" for every OI cell until OI-weighted exists.
-      cell(row, ".v__oi").textContent = oi === null || c.oi_usd === null ? "—" : usd(c.oi_usd);
-      cell(row, ".v__w").textContent = w === null ? "—" : weightText(w);
-      cell(row, ".tick-min").textContent = minT;
-      cell(row, ".tick-max").textContent = maxT;
-      cell(row, ".track__oi").hidden = oi === null;
-      cell(row, ".tick-oi").hidden = oi === null;
-      cell(row, ".badge").textContent = STATUS_LABEL[c.status];
-      if (live) {
-        const track = cell(row, ".track");
-        track.style.setProperty("--x", pos(c.rate_8h));
-        track.style.setProperty("--w", w === null ? "0.3" : Math.sqrt(w).toFixed(3)); // dot area ∝ weight
-      }
-      return row;
+  const total = s.open_interest_usd;
+  setValue(kpiAvg, rate(avg), false);
+  setValue(kpiOi, oi === null ? WAIT_OI : rate(oi), oi === null);
+  setValue(kpiSpread, oi === null ? WAIT_OI : rate(oi - avg), oi === null);
+  setValue(kpiVenues, `${s.markets} / ${s.components.length}`, false);
+  setValue(kpiOiTotal, total === null ? WAIT_OI : usd(total), total === null);
+  kpiOiTotalNote.textContent = `USD · ${listed(s)} listed venues`;
+  kpiMarks.replaceChildren(
+    ...venueRows(s).map(({ c }) => {
+      const mark = document.createElement("span");
+      mark.className = "mark";
+      mark.dataset.status = c.status;
+      return mark;
     }),
   );
 };
 
-// ---- Chart ----------------------------------------------------------------
+/** Contiguous runs of rebuilt points, as [first, last] timestamps. */
+const backfillRuns = (points: HistoryPoint[]) => {
+  const runs: [number, number][] = [];
+  let run: [number, number] | undefined;
+  for (const p of points) {
+    if (p.source !== "backfill") {
+      run = undefined;
+    } else if (run === undefined) {
+      run = [p.timestamp, p.timestamp];
+      runs.push(run);
+    } else {
+      run[1] = p.timestamp;
+    }
+  }
+  return runs;
+};
 
-const localTime = (time: Time, withSeconds: boolean) =>
-  new Date((time as UTCTimestamp) * 1000).toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: withSeconds ? "2-digit" : undefined,
+/** The text around the chart; the series themselves are drawn by rebuildChart and pushPoint. */
+const renderChartText = (s: Snapshot | undefined) => {
+  const points = s ? (history.get(selected) ?? []) : [];
+  const runs = backfillRuns(points);
+  legendBackfill.hidden = runs.length === 0;
+  backfillNote.hidden = runs.length === 0;
+  const ranges = runs.map(([from, to]) => {
+    const [first, last] = [clock(from, false), clock(to, false)];
+    return first === last ? first : `${first}–${last}`;
   });
+  backfillNote.textContent = runs.length === 0 ? "" : `Muted points ${ranges.join(", ")} were rebuilt from 1-minute history after a restart.`;
+  chartStatus.textContent = pendingText();
+  const oi = s?.oi_weighted_predicted_funding_rate ?? null;
+  chartEl.setAttribute(
+    "aria-label",
+    s && points.length > 0
+      ? `${historyWindow.textContent} history for ${selected}: AVG and OI-weighted lines, spread bars in the lower pane. Latest AVG ${rate(s.aggregated_predicted_funding_rate)}, OI-weighted ${oi === null ? WAIT_OI : rate(oi)} % per 8h.${runs.length > 0 ? " Includes rebuilt points." : ""}`
+      : `History chart, ${pendingText()}`,
+  );
+};
 
-const localDate = (time: Time) =>
-  new Date((time as UTCTimestamp) * 1000).toLocaleDateString([], { month: "short", day: "numeric" });
+const venueRow = (r: VenueRow) => {
+  const { c } = r;
+  const id = slug(c.venue);
+  const open = openVenues.has(c.venue);
+  const row = venueRowTemplate.cloneNode(true) as HTMLElement;
+  row.id = id;
+  row.dataset.venue = c.venue;
+  row.dataset.status = c.status;
+  row.dataset.open = String(open);
+  const toggle = row.querySelector(".vtoggle") as HTMLElement;
+  toggle.setAttribute("aria-expanded", String(open));
+  toggle.setAttribute("aria-controls", `${id}-detail`);
+  field(row, "venue").textContent = c.venue;
+  field(row, "symbol").textContent = c.symbol ?? "—";
+  field(row, "predicted").textContent = rate(c.predicted_rate);
+  field(row, "period").textContent = `${c.rate_period_hours}h`;
+  field(row, "rate-8h").textContent = rate(c.rate_8h);
+  field(row, "oi").textContent = c.oi_usd !== null ? usd(c.oi_usd) : c.status === "unlisted" ? "—" : "waiting…";
+  const bar = field(row, "weight-bar");
+  if (r.used) {
+    const r8 = c.rate_8h ?? 0;
+    field(row, "weight").textContent = r.weight === null ? PENDING : weightText(r.weight);
+    bar.style.setProperty("--weight", r.weight === null ? "0%" : `${(r.weight * 100).toFixed(2)}%`);
+    field(row, "to-avg").textContent = rate(r8 / r.n);
+    field(row, "to-oi").textContent = r.weight === null ? PENDING : rate(r8 * r.weight);
+  } else {
+    field(row, "weight").textContent = "—";
+    (bar.parentElement as HTMLElement).hidden = true;
+    field(row, "to-avg").textContent = "—";
+    field(row, "to-oi").textContent = "—";
+  }
+  field(row, "status").textContent =
+    c.status === "used" ? "Used" : c.status === "stale" ? `Excluded · stale${since(c)}` : c.status === "unlisted" ? "Excluded · not listed" : "Excluded · no predicted rate";
+  const detail = row.querySelector(".vdetail") as HTMLElement;
+  detail.id = `${id}-detail`;
+  detail.hidden = !open;
+  detail.replaceChildren(
+    ...detailLines(r).map(([key, value]) => {
+      const line = venueLineTemplate.cloneNode(true) as HTMLElement;
+      (line.querySelector(".vline-k") as HTMLElement).textContent = key;
+      (line.querySelector(".vline-v") as HTMLElement).textContent = value;
+      return line;
+    }),
+  );
+  return row;
+};
+
+const renderVenues = (s: Snapshot | undefined) => {
+  venuePlaceholderTitle.textContent = pendingText();
+  venuePlaceholderText.textContent =
+    conn === "disconnected" || conn === "rejected" ? "Connect with your access token to see how the ten venues produce AVG and OI-weighted." : "The breakdown appears with the first snapshot.";
+  // Keeps keyboard focus on the same venue across a re-render.
+  const focused = document.activeElement?.closest<HTMLElement>(".vrow-venue")?.dataset.venue;
+  if (!s) {
+    rowsUsed.replaceChildren();
+    rowsExcluded.replaceChildren();
+    return;
+  }
+  const rows = venueRows(s);
+  const used = rows.filter((r) => r.used);
+  const excluded = rows.filter((r) => !r.used);
+  const usedOi = used[0]?.usedOi ?? null;
+  const oi = s.oi_weighted_predicted_funding_rate;
+  rowsUsed.replaceChildren(...used.map(venueRow));
+  rowsExcluded.replaceChildren(...excluded.map(venueRow));
+  sumUsedOi.textContent = usedOi === null ? PENDING : usd(usedOi);
+  sumWeights.textContent = usedOi === null ? PENDING : "100%";
+  sumAvg.textContent = rate(s.aggregated_predicted_funding_rate);
+  sumOi.textContent = oi === null ? PENDING : rate(oi);
+  excludedCount.textContent = String(excluded.length);
+  listedCount.textContent = String(listed(s));
+  venueTotalOi.textContent = s.open_interest_usd === null ? WAIT_OI : usd(s.open_interest_usd);
+  if (focused !== undefined) (document.getElementById(slug(focused))?.querySelector(".vtoggle") as HTMLElement | null)?.focus();
+};
+
+/** Written only when the coin, connection, data state or empty-token error changes, so each transition is heard once. */
+const renderAnnounce = (s: Snapshot | undefined, state: DataState) => {
+  const key = `${selected}|${conn}|${state}|${tokenEmpty}`;
+  if (key === announced) return;
+  announced = key;
+  dataAnnounce.textContent = tokenEmpty
+    ? "Enter a token to connect."
+    : conn === "disconnected"
+      ? "Disconnected."
+      : conn === "connecting"
+        ? "Connecting."
+        : conn === "rejected"
+          ? "Token rejected."
+          : state === "waiting-data"
+            ? `${selected}: connected, waiting for data.`
+            : state === "waiting-oi"
+              ? `${selected}: AVG received, waiting for open interest.`
+              : state === "stale"
+                ? `${selected}: data is stale, last update ${duration(Date.now() - (s?.timestamp ?? Date.now()))} ago.`
+                : `${selected}: live.`;
+};
+
+const render = () => {
+  const s = latest.get(selected);
+  const state = dataState(s);
+  renderedState = state;
+  renderRoot(s, state);
+  renderGate();
+  renderCoins();
+  renderAge(s, state);
+  renderKpis(s);
+  renderChartText(s);
+  renderVenues(s);
+  renderAnnounce(s, state);
+};
+
+const setConn = (next: Conn) => {
+  conn = next;
+  render();
+};
+
+// ---- Chart ----------------------------------------------------------------
 
 /** Design tokens from `style.css`; the chart draws on a canvas and cannot use CSS directly. */
 const cssVar = (name: string) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 const px = (name: string) => Number.parseInt(cssVar(name), 10);
 
-const chart = createChart($<HTMLDivElement>("#chart"), {
+const localTime = (time: Time, withSeconds: boolean) => clock((time as UTCTimestamp) * 1000, withSeconds);
+
+const localDate = (time: Time) =>
+  new Date((time as UTCTimestamp) * 1000).toLocaleDateString([], { month: "short", day: "numeric" });
+
+const chart = createChart(chartEl, {
   autoSize: true,
   layout: {
-    background: { type: ColorType.Solid, color: "transparent" },
+    background: { type: ColorType.Solid, color: cssVar("--chart-bg") },
     textColor: cssVar("--chart-text"),
     fontFamily: cssVar("--font-mono"),
     fontSize: px("--chart-font-size"),
+    panes: { enableResize: false, separatorColor: cssVar("--chart-separator"), separatorHoverColor: cssVar("--chart-separator") },
   },
   grid: { vertLines: { color: cssVar("--chart-grid") }, horzLines: { color: cssVar("--chart-grid") } },
   rightPriceScale: { borderVisible: false },
@@ -264,44 +465,65 @@ const chart = createChart($<HTMLDivElement>("#chart"), {
     borderVisible: false,
     timeVisible: true,
     secondsVisible: false,
+    fixLeftEdge: true,
+    fixRightEdge: true,
     // The library picks the tick type by UTC day; the label shows that point's local date.
     tickMarkFormatter: (t: Time, type: TickMarkType) => (type === TickMarkType.Time || type === TickMarkType.TimeWithSeconds ? localTime(t, false) : localDate(t)),
   },
-  crosshair: { mode: CrosshairMode.Normal },
+  crosshair: {
+    mode: CrosshairMode.Normal,
+    vertLine: { color: cssVar("--chart-crosshair"), labelBackgroundColor: cssVar("--chart-crosshair-label") },
+    horzLine: { color: cssVar("--chart-crosshair"), labelBackgroundColor: cssVar("--chart-crosshair-label") },
+  },
   localization: { timeFormatter: (t: Time) => `${localDate(t)} ${localTime(t, true)}` },
 });
 
 // Canvas text does not redraw when the web font arrives.
-void document.fonts.load(`${px("--chart-font-size")}px "JetBrains Mono"`).then(() => chart.applyOptions({ layout: { fontFamily: cssVar("--font-mono") } }));
+void document.fonts.load(`${px("--chart-font-size")}px ${cssVar("--font-mono")}`).then(() => chart.applyOptions({ layout: { fontFamily: cssVar("--font-mono") } }));
 
-const priceFormat: PriceFormatCustom = { type: "custom", minMove: 0.00001, formatter: (p: number) => signed(p, 4) };
+const priceFormat: PriceFormatCustom = { type: "custom", minMove: 0.00001, formatter: (p: number) => signed(p, 5) };
 const lineWidth = (px("--chart-line-width") || 2) as LineWidth;
-const spreadPos = cssVar("--chart-spread-pos");
-const spreadNeg = cssVar("--chart-spread-neg");
+
+/** Series and per-point colours from the chart tokens. */
+const colors = {
+  avg: cssVar("--chart-avg"),
+  oi: cssVar("--chart-oi"),
+  spreadPos: cssVar("--chart-spread-pos"),
+  spreadNeg: cssVar("--chart-spread-neg"),
+  avgBackfill: cssVar("--chart-avg-backfill"),
+  oiBackfill: cssVar("--chart-oi-backfill"),
+  spreadPosBackfill: cssVar("--chart-spread-pos-backfill"),
+  spreadNegBackfill: cssVar("--chart-spread-neg-backfill"),
+};
+const isBackfill = (p: HistoryPoint) => p.source === "backfill";
 
 interface Track {
   series: ISeriesApi<"Line" | "Histogram">;
   pick: (p: HistoryPoint) => number | null;
-  /** Per-point colour (spread bars). */
-  tint?: (v: number) => string;
+  /** Per-point colour; `undefined` keeps the series colour. Rebuilt points get the muted `*-backfill` tokens. */
+  color: (p: HistoryPoint, value: number) => string | undefined;
   lastTime: number;
 }
 
+const avgTrack: Track = {
+  series: chart.addSeries(LineSeries, { color: colors.avg, lineWidth, priceFormat, priceLineVisible: false }),
+  pick: (p) => p.aggregated_predicted_funding_rate,
+  color: (p) => (isBackfill(p) ? colors.avgBackfill : undefined),
+  lastTime: 0,
+};
+const oiTrack: Track = {
+  series: chart.addSeries(LineSeries, { color: colors.oi, lineWidth, priceFormat, priceLineVisible: false }),
+  pick: (p) => p.oi_weighted_predicted_funding_rate,
+  color: (p) => (isBackfill(p) ? colors.oiBackfill : undefined),
+  lastTime: 0,
+};
 const tracks: Track[] = [
+  avgTrack,
+  oiTrack,
   {
-    series: chart.addSeries(LineSeries, { color: cssVar("--chart-avg"), lineWidth, priceFormat, priceLineVisible: false, title: "AVG" }),
-    pick: (p) => p.aggregated_predicted_funding_rate,
-    lastTime: 0,
-  },
-  {
-    series: chart.addSeries(LineSeries, { color: cssVar("--chart-oi"), lineWidth, priceFormat, priceLineVisible: false, title: "OI-w" }),
-    pick: (p) => p.oi_weighted_predicted_funding_rate,
-    lastTime: 0,
-  },
-  {
-    series: chart.addSeries(HistogramSeries, { priceFormat, priceLineVisible: false, title: "Spread" }, 1),
+    series: chart.addSeries(HistogramSeries, { priceFormat, priceLineVisible: false }, 1),
     pick: (p) => (p.oi_weighted_predicted_funding_rate === null ? null : p.oi_weighted_predicted_funding_rate - p.aggregated_predicted_funding_rate),
-    tint: (v) => (v < 0 ? spreadNeg : spreadPos),
+    color: (p, v) => (isBackfill(p) ? (v < 0 ? colors.spreadNegBackfill : colors.spreadPosBackfill) : v < 0 ? colors.spreadNeg : colors.spreadPos),
     lastTime: 0,
   },
 ];
@@ -310,13 +532,14 @@ chart.panes()[1]?.setHeight(px("--chart-spread-pane"));
 type ChartPoint = LineData<UTCTimestamp> | WhitespaceData<UTCTimestamp>;
 
 /**
- * One point per second (last value wins), ascending, as lightweight-charts requires. After any pause longer than
- * staleAfterMs() a whitespace point marks the gap on the index-based time scale, and the last valued point before it
- * is transparent: a line series skips whitespace and strokes segment i-1 → i in item i-1's colour, so that hides the
- * segment joining across the downtime. Gaps are detected from every point, including ones `pick` skips, so all
- * tracks break together.
+ * One point per second (last value wins), ascending, as lightweight-charts requires, each coloured by `track.color`.
+ * After any pause longer than staleAfterMs() a whitespace point marks the gap on the index-based time scale, and on
+ * a line series the last valued point before it is transparent: a line series skips whitespace and strokes segment
+ * i-1 → i in item i-1's colour, so that hides the segment joining across the downtime. Histogram bars before a gap
+ * keep their colour. Gaps are detected from every point, including ones `pick` skips, so all tracks break together.
  */
-const toPoints = (points: HistoryPoint[], pick: Track["pick"]): ChartPoint[] => {
+const toPoints = (points: HistoryPoint[], track: Track): ChartPoint[] => {
+  const line = track.series.seriesType() === "Line";
   const bySecond = new Map<number, ChartPoint>();
   let prev: number | undefined;
   let lastValued: LineData<UTCTimestamp> | undefined;
@@ -325,12 +548,13 @@ const toPoints = (points: HistoryPoint[], pick: Track["pick"]): ChartPoint[] => 
     if (prev !== undefined && p.timestamp - prev > staleAfterMs()) {
       const gap = (Math.floor(prev / 1000) + 1) as UTCTimestamp;
       if (gap < time) bySecond.set(gap, { time: gap });
-      if (lastValued !== undefined) lastValued.color = "transparent";
+      if (line && lastValued !== undefined) lastValued.color = "transparent";
     }
     prev = p.timestamp;
-    const value = pick(p);
+    const value = track.pick(p);
     if (value !== null) {
-      lastValued = { time, value };
+      const color = track.color(p, value);
+      lastValued = color === undefined ? { time, value } : { time, value, color };
       bySecond.set(time, lastValued);
     }
   }
@@ -340,9 +564,8 @@ const toPoints = (points: HistoryPoint[], pick: Track["pick"]): ChartPoint[] => 
 const rebuildChart = (fit = true) => {
   const points = history.get(selected) ?? [];
   for (const track of tracks) {
-    const data = toPoints(points, track.pick);
-    const { tint } = track;
-    track.series.setData(tint === undefined ? data : data.map((d) => ("value" in d ? { ...d, color: tint(d.value) } : d)));
+    const data = toPoints(points, track);
+    track.series.setData(data);
     track.lastTime = data.at(-1)?.time ?? 0;
   }
   if (fit) chart.timeScale().fitContent();
@@ -363,7 +586,8 @@ const pushPoint = (p: HistoryPoint, evicted: boolean) => {
     // update() rejects points older than the last one.
     if (value === null || time < track.lastTime) continue;
     const point = { time: time as UTCTimestamp, value };
-    track.series.update(track.tint === undefined ? point : { ...point, color: track.tint(value) });
+    const color = track.color(p, value);
+    track.series.update(color === undefined ? point : { ...point, color });
     track.lastTime = time;
   }
 };
@@ -371,15 +595,9 @@ const pushPoint = (p: HistoryPoint, evicted: boolean) => {
 // ---- Coins ----------------------------------------------------------------
 
 const select = (coin: CoinSymbol) => {
+  if (coin !== selected) openVenues.clear();
   selected = coin;
-  for (const button of coinButtons) {
-    const active = button.dataset.coin === coin;
-    button.setAttribute("aria-selected", String(active));
-    button.tabIndex = active ? 0 : -1;
-  }
-  for (const label of coinLabels) label.textContent = coin;
-  renderHeadline();
-  renderVenues();
+  render();
   rebuildChart();
 };
 
@@ -390,15 +608,13 @@ const applyCoins = () => {
   if (initial !== undefined) select(initial);
 };
 
-for (const button of coinButtons) {
-  button.addEventListener("click", () => {
-    const coin = button.dataset.coin ?? "";
-    if (isCoinSymbol(coin)) select(coin);
-  });
-}
+coinGroup.addEventListener("click", (event) => {
+  const coin = (event.target as HTMLElement).closest<HTMLElement>('[role="radio"]')?.dataset.coin ?? "";
+  if (isCoinSymbol(coin)) select(coin);
+});
 
-// Tablist keyboard model: arrows move between visible coins (wrapping), Home/End jump; selection follows focus.
-$<HTMLElement>("#coins").addEventListener("keydown", (event) => {
+// Radio group keyboard model: arrows move between visible coins (wrapping), Home/End jump; focus follows selection.
+coinGroup.addEventListener("keydown", (event) => {
   const visible = coinButtons.filter((b) => !b.hidden);
   const index = visible.findIndex((b) => b.dataset.coin === selected);
   if (index === -1) return;
@@ -419,13 +635,27 @@ $<HTMLElement>("#coins").addEventListener("keydown", (event) => {
   target.focus();
 });
 
+// Opens or closes one venue's arithmetic without re-rendering the table.
+venueTable.addEventListener("click", (event) => {
+  const toggle = (event.target as HTMLElement).closest<HTMLElement>(".vtoggle");
+  const row = toggle?.closest<HTMLElement>(".vrow-venue");
+  const venue = row?.dataset.venue;
+  if (!toggle || !row || venue === undefined) return;
+  const open = !openVenues.has(venue);
+  if (open) openVenues.add(venue);
+  else openVenues.delete(venue);
+  row.dataset.open = String(open);
+  toggle.setAttribute("aria-expanded", String(open));
+  ($(`#${toggle.getAttribute("aria-controls")}`) as HTMLElement).hidden = !open;
+});
+
 // ---- Connection -----------------------------------------------------------
 
 const handle = (ws: WebSocket, msg: ServerMessage) => {
   switch (msg.type) {
     case "auth":
       if (msg.status === "ok") {
-        setStatus("Connected");
+        conn = "connected";
         coins = msg.coins;
         intervalMs = msg.interval_ms;
         historyWindow.textContent = `${Math.max(1, Math.round((HISTORY_LIMIT * intervalMs) / 3_600_000))}h`;
@@ -441,8 +671,11 @@ const handle = (ws: WebSocket, msg: ServerMessage) => {
       return;
     case "backfill":
       mergeBackfill(msg.points);
-      // Fits the content: the gap's whitespace is gone, so the old logical range would show other times.
-      if (msg.points.some((p) => p.symbol === selected)) rebuildChart();
+      if (msg.points.some((p) => p.symbol === selected)) {
+        // Fits the content: the gap's whitespace is gone, so the old logical range would show other times.
+        rebuildChart();
+        renderChartText(latest.get(selected));
+      }
       return;
     case "ping":
       send(ws, { type: "pong" });
@@ -454,11 +687,8 @@ const handle = (ws: WebSocket, msg: ServerMessage) => {
       const { components: _, ...point } = msg;
       const evicted = record(point);
       latest.set(msg.symbol, msg);
-      if (msg.symbol === selected) {
-        pushPoint(point, evicted);
-        renderVenues();
-      }
-      renderHeadline(); // other coins' buttons update too
+      if (msg.symbol === selected) pushPoint(point, evicted);
+      render(); // other coins' rates update too
       return;
     }
   }
@@ -475,7 +705,7 @@ const connect = () => {
     socket = null;
     old.close();
   }
-  setStatus("Connecting");
+  setConn("connecting");
   const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
   socket = ws;
   ws.onopen = () => send(ws, { type: "auth", token });
@@ -484,21 +714,34 @@ const connect = () => {
     if (socket !== ws) return; // replaced by a newer connection
     socket = null;
     if (event.code === CLOSE.invalidToken) {
-      setStatus("Rejected");
+      // A rejected token shows nothing, not the data an earlier token received.
+      history.clear();
+      latest.clear();
+      rebuildChart();
+      setConn("rejected");
       return;
     }
-    setStatus("Disconnected");
+    setConn("disconnected");
     reconnectTimer = window.setTimeout(connect, RECONNECT_MS);
   };
 };
 
 tokenForm.addEventListener("submit", (event) => {
   event.preventDefault();
-  if (tokenInput.value.trim() === "") {
+  if (conn === "connecting") return;
+  tokenEmpty = tokenInput.value.trim() === "";
+  if (tokenEmpty) {
+    render();
     tokenInput.focus();
     return;
   }
   connect();
+});
+
+tokenInput.addEventListener("input", () => {
+  if (!tokenEmpty) return;
+  tokenEmpty = false;
+  render();
 });
 
 tokenToggle.addEventListener("click", () => {
@@ -506,12 +749,18 @@ tokenToggle.addEventListener("click", () => {
   tokenInput.type = reveal ? "text" : "password";
   tokenToggle.textContent = reveal ? "Hide" : "Show";
   tokenToggle.setAttribute("aria-pressed", String(reveal));
-  tokenToggle.setAttribute("aria-label", reveal ? "Hide token" : "Show token");
 });
 
-setInterval(renderHeadline, 1000);
+// Data age every second; a data-state change (e.g. to stale) re-renders everything.
+setInterval(() => {
+  const s = latest.get(selected);
+  const state = dataState(s);
+  if (state === renderedState) renderAge(s, state);
+  else render();
+}, 1000);
 
-select(selected);
+$("#history-tz").textContent = Intl.DateTimeFormat().resolvedOptions().timeZone || "local";
+render();
 
 const stored = localStorage.getItem(TOKEN_KEY);
 if (stored !== null) {

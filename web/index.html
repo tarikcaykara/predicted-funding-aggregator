@@ -5,133 +5,174 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Predicted Funding Aggregator</title>
 <link rel="stylesheet" href="./style.css">
+<script type="module" src="./app.ts"></script>
 </head>
 <body>
-<div class="app" id="app" data-conn="disconnected" data-data="waiting-data">
+<div id="app" class="app" data-conn="disconnected" data-data="waiting-data">
+  <div class="wrap">
 
-  <aside class="side">
-    <header class="brand">
-      <div>
-        <h1 class="brand__title">Predicted Funding<br> Aggregator</h1>
-        <p class="brand__sub">% per 8h · 10 venues</p>
+    <header class="bar">
+      <div class="brand">
+        <h1 class="brand-title">Predicted Funding Aggregator</h1>
+        <p class="brand-sub">Cross-venue predicted funding for perpetuals · % per 8h</p>
       </div>
-      <span class="conn-pill" aria-hidden="true"><span class="status-dot"></span><span data-conn-label>Disconnected</span></span>
+
+      <form id="token-form" class="gate" novalidate>
+        <label for="token-input" class="label">Access token</label>
+        <div class="gate-row">
+          <input id="token-input" class="field" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste access token" aria-describedby="token-help" aria-invalid="false">
+          <button id="token-toggle" class="btn btn-secondary" type="button" aria-controls="token-input" aria-pressed="false">Show</button>
+          <button id="token-connect" class="btn btn-primary" type="submit" aria-disabled="false"><span class="spinner" aria-hidden="true"></span><span id="token-connect-label">Connect</span></button>
+        </div>
+        <p id="token-help" class="help" data-tone="neutral">Paste the access token from your service config. It is remembered on this device.</p>
+      </form>
     </header>
 
-    <form class="auth" id="auth" novalidate>
-      <label class="label" for="token">Access token</label>
-      <div class="auth__row">
-        <div class="field">
-          <input class="field__input" id="token" type="password" placeholder="AUTH_TOKEN" autocomplete="off" spellcheck="false">
-          <button class="field__toggle" id="toggle" type="button" aria-controls="token" aria-pressed="false">Show</button>
+    <section class="selrow" aria-label="Coin and data age">
+      <div class="coin-block">
+        <div id="coin-group" class="coins" role="radiogroup" aria-label="Coin, with its OI-weighted rate">
+          <button class="coin" type="button" role="radio" data-coin="BTC" aria-checked="true" tabindex="0"><span class="coin-ticker">BTC</span><span class="coin-name">Bitcoin</span><span class="coin-rate" data-coin-rate>—</span></button>
+          <button class="coin" type="button" role="radio" data-coin="ETH" aria-checked="false" tabindex="-1"><span class="coin-ticker">ETH</span><span class="coin-name">Ether</span><span class="coin-rate" data-coin-rate>—</span></button>
+          <button class="coin" type="button" role="radio" data-coin="SOL" aria-checked="false" tabindex="-1"><span class="coin-ticker">SOL</span><span class="coin-name">Solana</span><span class="coin-rate" data-coin-rate>—</span></button>
         </div>
-        <button class="btn" id="connect" type="submit">Connect</button>
+        <p class="caption">Each coin shows its OI-weighted rate, % per 8h. Arrow keys, Home and End move the selection.</p>
       </div>
-      <p class="status" role="status" aria-live="polite"><span class="status-dot"></span><span class="status__label" data-conn-label>Disconnected</span><span class="status__detail" id="conn-detail">Enter a token and connect.</span></p>
-    </form>
-
-    <section class="coins" aria-label="Coin">
-      <h2 class="label">Coin · OI-weighted</h2>
-      <div class="coins__list" role="tablist" id="coins">
-        <button class="coin" role="tab" type="button" data-coin="BTC" aria-selected="true"><span class="coin__sym">BTC</span><span class="coin__val">—</span></button>
-        <button class="coin" role="tab" type="button" data-coin="ETH" aria-selected="false"><span class="coin__sym">ETH</span><span class="coin__val">—</span></button>
-        <button class="coin" role="tab" type="button" data-coin="SOL" aria-selected="false"><span class="coin__sym">SOL</span><span class="coin__val">—</span></button>
+      <div id="data-age" class="age">
+        <span class="label">Data age · <span data-bind="coin">BTC</span></span>
+        <span id="data-age-value" class="age-value">—</span>
+        <span id="data-age-note" class="age-note">Not connected</span>
       </div>
     </section>
 
-    <section class="fresh" aria-label="Data freshness">
-      <span class="label">Data age</span>
-      <div class="fresh__row"><span class="fresh__age" id="age">—</span><span class="chip-stale">STALE</span></div>
-      <p class="fresh__note">Older than three polling intervals.</p>
-    </section>
-  </aside>
+    <p id="stale-notice" class="notice" role="note"><strong class="notice-title">Stale data · <span data-bind="coin">BTC</span></strong> <span id="stale-notice-text"></span></p>
 
-  <main class="main">
-    <p class="sr-only" id="data-announce" role="status" aria-live="polite"></p>
-    <section class="metrics" aria-label="Headline values">
-      <div class="metric">
-        <div class="metric__head"><span class="swatch swatch--avg"></span><span>AVG · <span data-coin-label>BTC</span></span><span class="chip-stale">STALE</span></div>
-        <div class="metric__value is-waiting" id="m-avg">—</div>
-        <div class="metric__note is-waiting" id="m-avg-note">waiting for data…</div>
+    <section id="kpis" class="kpis" aria-label="Headline values for BTC">
+      <div class="kpi kpi-main">
+        <p class="kpi-label"><span class="swatch swatch-avg" aria-hidden="true"></span>AVG · <span data-bind="coin">BTC</span> <span class="stale-tag">stale</span></p>
+        <p id="kpi-avg" class="kpi-value" data-pending="true">not connected</p>
+        <p class="kpi-note">% per 8h · plain mean of used venues</p>
       </div>
-      <div class="metric">
-        <div class="metric__head"><span class="swatch swatch--oi"></span><span>OI-weighted · <span data-coin-label>BTC</span></span><span class="chip-stale">STALE</span></div>
-        <div class="metric__value is-waiting" id="m-oi">—</div>
-        <div class="metric__note is-waiting" id="m-oi-note">waiting for data…</div>
+      <div class="kpi kpi-main">
+        <p class="kpi-label"><span class="swatch swatch-oi" aria-hidden="true"></span>OI-weighted · <span data-bind="coin">BTC</span> <span class="stale-tag">stale</span></p>
+        <p id="kpi-oi" class="kpi-value" data-pending="true">not connected</p>
+        <p class="kpi-note">% per 8h · weighted by open interest</p>
       </div>
-      <div class="metric">
-        <div class="metric__head"><span>Spread</span><span class="chip-stale">STALE</span></div>
-        <div class="metric__value is-waiting" id="m-sp">—</div>
-        <div class="metric__note is-waiting" id="m-sp-note">waiting for data…</div>
+      <div class="kpi">
+        <p class="kpi-label">Spread</p>
+        <p id="kpi-spread" class="kpi-value" data-pending="true">not connected</p>
+        <p class="kpi-note">pp · OI-weighted − AVG</p>
       </div>
-      <div class="metric">
-        <div class="metric__head"><span>Venues used</span><span class="chip-stale">STALE</span></div>
-        <div class="metric__value is-waiting" id="m-ven">—</div>
-        <div class="pips" id="pips" aria-hidden="true"></div>
+      <div class="kpi">
+        <p class="kpi-label">Venues used</p>
+        <p id="kpi-venues" class="kpi-value" data-pending="true">not connected</p>
+        <span id="kpi-venues-marks" class="marks" aria-hidden="true"></span>
+      </div>
+      <div class="kpi">
+        <p class="kpi-label">Open interest</p>
+        <p id="kpi-oi-total" class="kpi-value" data-pending="true">not connected</p>
+        <p id="kpi-oi-total-note" class="kpi-note">USD · 10 listed venues</p>
       </div>
     </section>
 
-    <section class="panel" aria-label="History">
-      <div class="panel__head">
-        <h2 class="panel__title">History · <span id="history-window">12h</span></h2>
-        <div class="legend">
-          <span class="legend__item"><span class="legend__line legend__line--avg"></span>AVG</span>
-          <span class="legend__item"><span class="legend__line legend__line--oi"></span>OI-weighted <span class="legend__wait">· waiting for open interest…</span></span>
-          <span class="legend__item"><span class="legend__bar"></span>Spread (lower pane)</span>
+    <section class="card" aria-labelledby="history-heading">
+      <div class="card-head">
+        <h2 id="history-heading" class="h2">History · <span id="history-window">12h</span> · <span data-bind="coin">BTC</span></h2>
+        <ul class="legend" aria-label="Chart legend">
+          <li id="legend-avg" class="legend-item"><span class="legend-line legend-line-avg" aria-hidden="true"></span>AVG</li>
+          <li id="legend-oi" class="legend-item"><span class="legend-line legend-line-oi" aria-hidden="true"></span>OI-weighted</li>
+          <li id="legend-spread" class="legend-item"><span class="legend-bars" aria-hidden="true"><span class="legend-bar legend-bar-pos"></span><span class="legend-bar legend-bar-neg"></span></span>Spread, lower pane</li>
+          <li id="legend-backfill" class="legend-item" hidden><span class="legend-backfill" aria-hidden="true"><span class="legend-line legend-line-avg-backfill"></span><span class="legend-line legend-line-oi-backfill"></span></span>Rebuilt (backfill)</li>
+        </ul>
+      </div>
+      <div class="chart-frame">
+        <div id="chart" class="chart" role="img" aria-label="History chart, not connected"></div>
+        <p id="chart-status" class="chart-status">not connected</p>
+      </div>
+      <p id="history-caption" class="caption">Local time (<span id="history-tz">local</span>); the date appears where the UTC day changes. A pause longer than 3 poll intervals leaves a gap. <span id="history-backfill-note" hidden></span></p>
+    </section>
+
+    <section class="card" aria-labelledby="venues-heading">
+      <div class="card-intro">
+        <h2 id="venues-heading" class="h2">Venue breakdown · <span data-bind="coin">BTC</span></h2>
+        <p class="lede">Read it like a receipt: each used venue's 8h rate is split into its share of AVG and its share of OI-weighted, and each column adds up to the headline. Excluded venues sit below the line. Open a venue to see its arithmetic.</p>
+        <p class="formula"><span class="formula-item">→ AVG = rate ÷ <span data-bind="used-count">7</span></span><span class="formula-item">→ OI-weighted = rate × OI weight</span></p>
+      </div>
+
+      <p id="venue-placeholder" class="placeholder"><strong id="venue-placeholder-title" class="placeholder-title">not connected</strong><span id="venue-placeholder-text">Connect with your access token to see how the ten venues produce AVG and OI-weighted.</span></p>
+
+      <div id="venue-table" class="vtable" role="table" aria-labelledby="venues-heading">
+        <div role="rowgroup">
+          <div class="vrow vrow-head" role="row">
+            <span class="vcell" role="columnheader">Venue · market</span>
+            <span class="vcell num" role="columnheader">Predicted</span>
+            <span class="vcell" role="columnheader">Period</span>
+            <span class="vcell num" role="columnheader">Rate / 8h</span>
+            <span class="vcell num" role="columnheader">Open interest</span>
+            <span class="vcell num" role="columnheader">OI weight</span>
+            <span class="vcell num" role="columnheader">→ AVG<span class="vhead-sub">÷ <span data-bind="used-count">7</span></span></span>
+            <span class="vcell num" role="columnheader">→ OI-weighted<span class="vhead-sub">× weight</span></span>
+            <span class="vcell" role="columnheader">Status</span>
+          </div>
+        </div>
+        <div id="venue-rows-used" class="vrows" role="rowgroup"></div>
+        <div role="rowgroup">
+          <div id="venue-sum" class="vrow vrow-sum" role="row">
+            <span class="vcell vcell-venue" role="rowheader"><span class="vname">Σ <span data-bind="used-count">7</span> used venues</span><span class="vsub">equals the headline values</span></span>
+            <span class="vcell vcell-pad" role="cell"></span>
+            <span class="vcell vcell-pad" role="cell"></span>
+            <span class="vcell vcell-pad" role="cell"></span>
+            <span class="vcell num" role="cell"><span class="vk">Used open interest</span><span id="sum-used-oi">—</span></span>
+            <span class="vcell num" role="cell"><span class="vk">Weights</span><span id="sum-weights">—</span></span>
+            <span class="vcell num vcell-avg vcell-total" role="cell"><span class="vk">= AVG</span><span id="sum-avg">—</span></span>
+            <span class="vcell num vcell-oi vcell-total" role="cell"><span class="vk">= OI-weighted</span><span id="sum-oi">—</span></span>
+            <span class="vcell vsub" role="cell">contributions shown rounded</span>
+          </div>
+          <div class="vgroup-head" role="row">
+            <span role="cell">Excluded · outside both averages (<span id="venue-excluded-count">0</span>)</span>
+            <span role="cell">open interest of listed venues still counts toward the total</span>
+          </div>
+        </div>
+        <div id="venue-rows-excluded" class="vrows" role="rowgroup"></div>
+        <div role="rowgroup">
+          <div class="vtotal" role="row">
+            <span role="cell">Σ <span id="venue-listed-count">10</span> listed venues · total open interest</span>
+            <span id="venue-total-oi" class="mono" role="cell">—</span>
+          </div>
         </div>
       </div>
-      <div class="chart__frame">
-        <div class="chart__canvas" id="chart"></div>
-        <div class="chart__empty">waiting for data…</div>
-      </div>
     </section>
 
-    <section class="panel venues" id="venues" aria-label="Venue breakdown">
-      <div class="panel__head">
-        <h2 class="panel__title">Venues · <span data-coin-label>BTC</span></h2>
-        <div class="legend">
-          <span class="legend__item"><span class="legend__dot"></span>dot area ∝ OI weight</span>
-          <span class="legend__item"><span class="legend__line legend__line--avg"></span>AVG</span>
-          <span class="legend__item"><span class="legend__line legend__line--oi"></span>OI-weighted</span>
-          <span class="legend__item"><span class="legend__hatch"></span>excluded</span>
-        </div>
-      </div>
-      <table class="vt">
-        <thead>
-          <tr>
-            <th scope="col">Venue · symbol</th>
-            <th scope="col"><div class="axis" aria-hidden="true"><span class="axis__min" data-axis-min></span><span class="axis__zero">0</span><span class="axis__max" data-axis-max></span><span class="axis__avg">AVG</span><span class="axis__oi">OI</span></div><span class="sr-only">Rate on shared axis</span></th>
-            <th scope="col" class="r">Predicted</th>
-            <th scope="col">Per</th>
-            <th scope="col" class="r">Rate 8h</th>
-            <th scope="col" class="r">Open int.</th>
-            <th scope="col" class="r">Weight</th>
-            <th scope="col">Status</th>
-          </tr>
-        </thead>
-        <tbody id="venue-rows"></tbody>
-      </table>
-      <p class="venues__empty">waiting for data…</p>
-      <p class="venues__note">Sorted by 8h rate. Excluded venues are not part of AVG or OI-weighted.</p>
-    </section>
-  </main>
+    <footer class="foot">
+      <p>Data source: <a href="https://coinalyze.net">Coinalyze</a> · Educational project. Not affiliated with Coinalyze.</p>
+    </footer>
+  </div>
 
-  <footer class="foot">Data source: <a href="https://coinalyze.net" target="_blank" rel="noopener">Coinalyze</a> · Educational project. Not affiliated with Coinalyze.</footer>
+  <div id="data-announce" class="visually-hidden" aria-live="polite" aria-atomic="true"></div>
 </div>
 
-<template id="venue-row">
-  <tr class="v">
-    <th scope="row" class="v__venue"><span class="v__name"></span><span class="v__sym"></span></th>
-    <td class="v__track"><div class="track"><span class="track__zero"></span><span class="track__avg"></span><span class="track__oi"></span><span class="track__dot"></span><span class="track__excl">excluded</span></div><div class="track__ticks" aria-hidden="true"><span class="tick-min"></span><span class="tick-zero">0</span><span class="tick-max"></span><span class="tick-avg">AVG</span><span class="tick-oi">OI</span></div></td>
-    <td class="v__num v__pred" data-label="Predicted"></td>
-    <td class="v__per" data-label="Period"></td>
-    <td class="v__num v__r8"><span class="v__r8-val"></span><span class="v__r8-unit">per 8h</span></td>
-    <td class="v__num v__oi" data-label="Open int."></td>
-    <td class="v__num v__w" data-label="Weight"></td>
-    <td class="v__status"><span class="badge"></span></td>
-  </tr>
+<template id="tpl-venue-row">
+  <div class="vrow vrow-venue" role="row" data-venue="" data-status="used" data-open="false">
+    <span class="vcell vcell-venue" role="rowheader">
+      <button class="vtoggle" type="button" aria-expanded="false" aria-controls="">
+        <span class="vname" data-field="venue"></span>
+        <span class="vsub" data-field="symbol"></span>
+        <svg class="chev" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4 6l4 4 4-4"/></svg>
+      </button>
+    </span>
+    <span class="vcell num" role="cell"><span class="vk">Predicted</span><span data-field="predicted"></span></span>
+    <span class="vcell mono" role="cell"><span class="vk">Period</span><span data-field="period"></span></span>
+    <span class="vcell num" role="cell"><span class="vk">Rate / 8h</span><span data-field="rate-8h"></span></span>
+    <span class="vcell num" role="cell"><span class="vk">Open interest</span><span data-field="oi"></span></span>
+    <span class="vcell num vcell-weight" role="cell"><span class="vk">OI weight</span><span class="wbar" aria-hidden="true"><span class="wbar-fill" data-field="weight-bar"></span></span><span data-field="weight"></span></span>
+    <span class="vcell num vcell-avg" role="cell"><span class="vk">→ AVG</span><span data-field="to-avg"></span></span>
+    <span class="vcell num vcell-oi" role="cell"><span class="vk">→ OI-weighted</span><span data-field="to-oi"></span></span>
+    <span class="vcell vcell-status" role="cell"><span class="vk">Status</span><span class="badge" data-field="status"></span></span>
+    <div class="vdetail" role="cell" id="" hidden></div>
+  </div>
 </template>
 
-<script type="module" src="./app.ts"></script>
+<template id="tpl-venue-line">
+  <span class="vline"><span class="vline-k"></span><span class="vline-v"></span></span>
+</template>
 </body>
 </html>

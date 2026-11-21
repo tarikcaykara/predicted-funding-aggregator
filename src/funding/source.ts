@@ -3,7 +3,7 @@ import { COIN_REGISTRY, type CoinSymbol } from "../coins.ts";
 import { createLogger, errorMessage } from "../log.ts";
 import type { MarketComponent, Snapshot, Source } from "../types.ts";
 import { aggregate } from "./aggregate.ts";
-import { VENUES, type Venue } from "./universe.ts";
+import { STALE_AFTER_MS, VENUES, type Venue } from "./universe.ts";
 
 const log = createLogger("funding");
 
@@ -14,8 +14,6 @@ export const OI_REFRESH_MS = 600000;
 export const OI_SEED_MAX_AGE_MS = 30 * 60 * 1000;
 /** API calls kept free per cycle. */
 const CALL_MARGIN = 2;
-/** Predicted rates older than this are excluded (live venues update about every minute). */
-export const STALE_AFTER_MS = 15 * 60 * 1000;
 const API_CALLS_PER_MIN = 40;
 
 type Client = Pick<CoinalyzeClient, "futureMarkets" | "predictedFundingRate" | "openInterestUsd">;
