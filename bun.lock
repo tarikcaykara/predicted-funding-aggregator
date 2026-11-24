@@ -5,7 +5,7 @@
     "": {
       "name": "predicted-funding-aggregator",
       "dependencies": {
-        "lightweight-charts": "^5.2.1",
+        "lightweight-charts": "^5.3.0",
       },
       "devDependencies": {
         "@types/bun": "^1.4.4",
@@ -113,7 +113,7 @@
 
     "lazy-cache": ["lazy-cache@1.0.4", "", {}, "sha512-RE2g0b5VGZsOCFOCgP7omTRYFqydmZkBwl5oNnQ1lDYC57uyO9KqNnNVxT7COSHTxrRCWVcAVOcbjk+tvh/rgQ=="],
 
-    "lightweight-charts": ["lightweight-charts@5.2.1", "", { "dependencies": { "fancy-canvas": "2.1.0" } }, "sha512-IVwoK1RLFiLPubaKIjNbtjWLnpPMqiABSrTay6whmNa8L1+19292VtHJ+BWyPUuLCwF0tcQlhEWd1CLB2a1nsQ=="],
+    "lightweight-charts": ["lightweight-charts@5.3.0", "", { "dependencies": { "fancy-canvas": "2.1.0" } }, "sha512-w16fu2/FteUkIJdgc9G2tOCKs1fwFSqnqF8+kMgHGv0uGIfcfpEJhziSaQbML1yrkbeg4nQXV3msjmhBzhLNhw=="],
 
     "merge-deep": ["merge-deep@3.0.3", "", { "dependencies": { "arr-union": "^3.1.0", "clone-deep": "^0.2.4", "kind-of": "^3.0.2" } }, "sha512-qtmzAS6t6grwEkNrunqTBdn0qKwFgNWvlxUbAV8es9M7Ot1EbyApytCnvE0jALPa46ZpKDUo527kKiaWplmlFA=="],
 
