@@ -163,11 +163,13 @@ docker compose ps       # "healthy" after the first check
 - **Image:** about 260 MB. Based on the pinned `oven/bun:1.4.4-debian`, runs as the non-root `bun` user, which can write only `/app/data` (the application code is root-owned), with a `HEALTHCHECK` on `/health`. `.dockerignore` is an allowlist: only `package.json`, `bun.lock`, `tsconfig.json`, `LICENSE`, `src/` and `web/` enter the image, so untracked files in the checkout stay out of it.
 - **Persistence:** the image sets `DATA_FILE=/app/data/funding_rate.json` and `HISTORY_FILE=/app/data/history.sqlite`; compose sets the same paths (they override the `./` paths in a copied `.env`) and mounts the named volume `data` there, so the latest snapshots and the history archive survive container re-creation.
 - **Shutdown:** SIGTERM triggers a graceful shutdown.
+- **Port:** published on `127.0.0.1` only, so other machines cannot reach it directly (before v4.5.1 it was every interface).
+- **Image tag and logs:** compose tags the image `predicted-funding-aggregator:${PFA_VERSION:-local}` (set `PFA_VERSION` in `.env` to switch builds) and keeps at most three 10 MB log files.
 
 ## Deployment security
 
 - The dashboard, `/ws` and `/export` are plain HTTP. On `ws://` the token crosses the network in clear text, and so does the `Authorization` header of an export.
-- Compose publishes the port on every interface. Beyond localhost or a trusted network, put the service behind a TLS reverse proxy (the dashboard then switches to `wss://` automatically) and restrict the port with a firewall.
+- Compose publishes the port on `127.0.0.1` only. To serve other machines, put the service behind a TLS reverse proxy or tunnel (the dashboard then switches to `wss://` automatically); widening the mapping to other interfaces exposes plain HTTP.
 - `AUTH_TOKEN` must be at least 32 characters; generate it with `openssl rand -hex 32`.
 - Client messages over 16 KiB are rejected. Connection limits and rate limiting belong to the proxy.
 - `bun run start` serves the production bundle; `NODE_ENV=development` enables Bun's dev server and is for local development only.
