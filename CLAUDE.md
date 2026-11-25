@@ -165,7 +165,7 @@ v4.4 (PR #40, tagged `v4.4.0`): rebuilt points reach open dashboards without a r
 
 v4.5 (PR #41, tagged `v4.5.0`): the dashboard implements the Claude Design "Receipt" direction with self-hosted IBM Plex Sans and Mono. The venue breakdown reads as a receipt (each used venue's share of AVG and of OI-weighted, a Σ row that adds up to the headline values, excluded venues below it with their reason), a fifth headline card shows the total open interest, and rebuilt points are drawn in muted `--chart-*-backfill` colours with a legend item and a caption. It is dark only: a light theme with a switch was designed and ported, then dropped after review together with the connection status box, whose job the values, the data age note, the token help text and Connect's spinner already do. `STALE_AFTER_MS` moved to the pure `universe.ts`, so the dashboard shows the real 15-minute venue limit. Number Line is archived at `v4.4.0`; every export is in `design/handoff/` (`receipt/`, `number-line/`, `ledger/`).
 
-v4.5.1 (PR #<N>, tagged `v4.5.1`): compose publishes the port on `127.0.0.1` only, tags the image with `PFA_VERSION` and caps container logs at 10 MB × 3. Reaching the service from another machine now needs a reverse proxy, a tunnel or a changed mapping.
+v4.5.1 (PR #44, tagged `v4.5.1`): compose publishes the port on `127.0.0.1` only, tags the image with `PFA_VERSION` and caps container logs at 10 MB × 3. Reaching the service from another machine now needs a reverse proxy, a tunnel or a changed mapping.
 
 Headed mode, a separate server file, the live chart source, the `--once` mode (`bun run once`, removed in v3.0), `SOURCES`/`API_INTERVAL_MS`/`CHART_INTERVAL_MS` and "all STABLE perps" scope are historical.
 
